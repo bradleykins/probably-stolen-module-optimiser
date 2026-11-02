@@ -89,9 +89,12 @@ function solverModule() {
   // grid: {rows, cols, usable: bool[]}
   // types: [{id, cells, count, base: [p, e, q], node?, receiver?, top?, side?, feedback?, cost?}]
   // opts: {weights: [p, e, q] (>= 0), mins: [p|null, e|null, q|null], rotate, flip, timeLimitMs}
+  //   fixed: [{id, cells}] items already in place (they count, and the search fills around them)
+  //   require: [id] a module type the layout must include (e.g. the Furnace's Blast module)
   // Score = weights . totals - sum of cost of placed items (cost >= 0: keeps valuable modules free).
   // Returns {found, score, totals, placements: [{id, cells}], optimal, steps}
   function solve(grid, types, opts = {}) {
+    if (opts.require?.length) return solveRequired(grid, types, opts);
     const { rows, cols } = grid, N = rows * cols;
     const w = opts.weights || [1, 1, 1];
     const mins = opts.mins || [null, null, null];
@@ -227,7 +230,7 @@ function solverModule() {
       i => { const [r, c] = at(i); return r * cols + (cols - 1 - c); },          // left <-> right
       i => { const [r, c] = at(i); return (rows - 1 - r) * cols + c; },          // top <-> bottom
       i => N - 1 - i,                                                             // 180 degrees
-    ].filter(f => grid.usable.every((u, i) => u === grid.usable[f(i)]));
+    ].filter(f => !(opts.fixed || []).length && grid.usable.every((u, i) => u === grid.usable[f(i)]));
     const layoutScore = (placements, totals) => dot(w, totals) - placements.reduce((s, p) => s + (byIdAll[p.id].cost || 0), 0);
 
     // Keeps the current layout (or a better mirror of it) if it meets the minimums and beats the best so far.
@@ -306,7 +309,7 @@ function solverModule() {
     const value = () => score() + shortfallWeight * cons.reduce((s, k) => s + Math.min(0, T[k] - mins[k]), 0);
     const add = (t, idx) => marks.push(put(t, idx));
     const clear = () => { while (marks.length) takeBack(marks.pop()); };
-    const snapshot = () => cur.map(p => ({ t: p.t, idx: p.cells }));
+    const snapshot = () => cur.slice(nFixed).map(p => ({ t: p.t, idx: p.cells }));
     const rebuild = (snap, skip = -1) => { clear(); snap.forEach((x, j) => j !== skip && add(x.t, x.idx)); };
 
       function greedyFill(randomise) {
@@ -366,6 +369,14 @@ function solverModule() {
     }
     let polishEnd = deadline;
 
+    // Items already in place go first and stay: cur[0..nFixed-1], so record() keeps them in every layout.
+    const nFixed = (opts.fixed || []).length;
+    for (const f of opts.fixed || []) {
+      const t = byIdAll[f.id];
+      if (!t || !t.left || f.cells.some(i => occ[i])) return { found: false, score: 0, totals: [0, 0, 0], placements: [], optimal: true, steps: 0 };
+      put(t, f.cells);
+    }
+
     // Fast search first (opts.heuristicMs): repeatedly clear part of the best layout and refill it greedily.
     // It finds strong layouts quickly when there are many modules and nodes; its result then lets the
     // exact search below skip anything that cannot beat it.
@@ -403,9 +414,38 @@ function solverModule() {
     // Out of time before the exact search finished: polish the best layout found.
     if (timedOut && found && opts.heuristicMs > 0) {
       polishEnd = Date.now() + 2000;
-      polish(bestPlace.map(p => ({ t: byIdAll[p.id], idx: p.cells })));
+      polish(bestPlace.slice(nFixed).map(p => ({ t: byIdAll[p.id], idx: p.cells })));
     }
     return { found, score: best, totals: bestTotals, placements: bestPlace, optimal: !timedOut, steps };
+  }
+
+  // A layout that must include one module of type opts.require[0]: try it in every spot it fits with a
+  // short search each, then give the best spot the rest of the time.
+  // shortcut: only the first required type is enforced; loop over spots per type if more are ever needed.
+  function solveRequired(grid, types, opts) {
+    const t = types.find(x => x.id === opts.require[0] && x.count > 0);
+    const rest = { ...opts, require: null };
+    if (!t) return solve(grid, types, rest);
+    const spots = [], seen = new Set();
+    for (const o of orientations(t.cells, opts.rotate !== false, !!opts.flip))
+      for (let pos = 0; pos < grid.rows * grid.cols; pos++) {
+        const r = Math.floor(pos / grid.cols), c = pos % grid.cols;
+        const idx = o.map(([dr, dc]) => [r + dr, c + dc]);
+        if (idx.some(([rr, cc]) => rr >= grid.rows || cc < 0 || cc >= grid.cols || !grid.usable[rr * grid.cols + cc])) continue;
+        const cells = idx.map(([rr, cc]) => rr * grid.cols + cc), key = cells.slice().sort((a, b) => a - b).join();
+        if (!seen.has(key)) { seen.add(key); spots.push(cells); }
+      }
+    const total = opts.timeLimitMs ?? 5000, each = Math.max(100, total / 2 / Math.max(1, spots.length));
+    let best = null, bestCells = null;
+    for (const cells of spots) {
+      const r = solve(grid, types, { ...rest, fixed: [{ id: t.id, cells }], timeLimitMs: each, heuristicMs: each * 0.8, onImprove: null });
+      if (r.found && (!best || r.score > best.score)) { best = r; bestCells = cells; if (opts.onImprove) opts.onImprove({ ...r, optimal: false }); }
+    }
+    if (!best) return { found: false, score: 0, totals: [0, 0, 0], placements: [], optimal: false, steps: 0 };
+    const left = Math.max(500, total / 2);
+    const r = solve(grid, types, { ...rest, fixed: [{ id: t.id, cells: bestCells }], timeLimitMs: left, heuristicMs: Math.min(opts.heuristicMs ?? 0, left / 2) || left / 2 });
+    const out = r.found && r.score >= best.score ? r : best;
+    return { ...out, optimal: false };
   }
 
   return { solve, evaluate, orientations };

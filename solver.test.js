@@ -101,4 +101,17 @@ check(big, bigTypes, res);
 const used = res.placements.flatMap(p => p.cells);
 assert.strictEqual(new Set(used).size, used.length, 'no overlaps');
 assert.ok(used.every(i => big.usable[i]), 'only usable cells');
+
+// A required module (the Furnace's Blast: only hurts stats) must be in the layout, and the rest still meets the minimum.
+const bar = [[0, 0], [0, 1], [0, 2], [0, 3]];
+const furnaceTypes = [mod(1, bar, 1, [0, -100, 0]), mod(2, sq, 3, [0, 0, 60]), mod(3, C, 2, [0, -10, 45]), node(4, dom, 2)];
+const req = solve(big, furnaceTypes, { weights: [0, 1, 0], mins: [null, null, 200], require: [1], flip: true, heuristicMs: 300, timeLimitMs: 4000 });
+assert.ok(req.found && req.placements.some(p => p.id === 1), 'required module placed');
+assert.ok(req.totals[2] >= 200, 'minimum still met');
+check(big, furnaceTypes, req);
+const reqCells = req.placements.flatMap(p => p.cells);
+assert.strictEqual(new Set(reqCells).size, reqCells.length, 'no overlaps with the required module');
+const free = solve(big, furnaceTypes, { weights: [0, 1, 0], mins: [null, null, 200], flip: true, heuristicMs: 300, timeLimitMs: 4000 });
+assert.ok(!free.placements.some(p => p.id === 1), 'not chosen when not required');
+console.log('required module:', req.totals);
 console.log('all tests passed');

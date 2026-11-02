@@ -38,7 +38,17 @@ function priorityWeights(priority) {
 // A machine preset as {mins, priority}.
 function presetTarget(p) {
   const order = [0, 1, 2].filter(k => p.weights[k] > 0).sort((a, b) => p.weights[b] - p.weights[a]);
-  return { mins: p.mins.slice(), priority: [0, 1, 2].map(r => order[r] ?? null) };
+  const t = { mins: p.mins.slice(), priority: [0, 1, 2].map(r => order[r] ?? null) };
+  if (p.blast !== undefined) t.blast = p.blast; // Furnace presets also say whether the Blast module is used
+  return t;
+}
+
+// The module a machine option requires (e.g. the Furnace's Blast): the first owned, accepted one, or null.
+// modules: list of {name, count}; returns its index.
+function requiredModule(machineDef, on, modules) {
+  if (!on || !machineDef.option) return null;
+  const i = modules.findIndex(m => m.count > 0 && m.name.startsWith(machineDef.option.module));
+  return i < 0 ? null : i;
 }
 
 // Bay grid with each placed item outlined and numbered. modules[id] gives name/node for a placement id.

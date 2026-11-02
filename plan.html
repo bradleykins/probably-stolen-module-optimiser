@@ -88,7 +88,8 @@ function newMachine(gameIndex, extra = {}) {
 // The preset dropdown shows a preset when the machine's minimums and priorities are exactly that preset's.
 function presetMatches(m, p) {
   const t = presetTarget(p);
-  return JSON.stringify(t.mins) === JSON.stringify(m.mins) && JSON.stringify(t.priority) === JSON.stringify(m.priority);
+  return JSON.stringify(t.mins) === JSON.stringify(m.mins) && JSON.stringify(t.priority) === JSON.stringify(m.priority)
+    && (t.blast === undefined || t.blast === !!m.blast);
 }
 
 // Minimums including the job deadline (a job needs a Performance level).
@@ -132,19 +133,20 @@ function currentHtml(m) {
 function renderMachines() {
   $('#newType').innerHTML = GAME.machines.map((g, i) => `<option value="${i}">${esc(g.name)}</option>`).join('');
   // Compact rank list: short rows, so any drop target fits on screen (the cards below are tall).
-  $('#rank').innerHTML = S.machines.length > 1 ? S.machines.map(m => `<li class="${m.include ? '' : 'skip'}" data-card="${m.key}" draggable="true" data-k="${m.key}">
-    <span class="grip">⠿</span> ${esc(m.name)}${m.userTarget ? ' <span class="ok">your target</span>' : ''}</li>`).join('') : '';
+  $('#rank').innerHTML = S.machines.length > 1 ? S.machines.map(m => `<li class="${m.include && !m.locked ? '' : 'skip'}" data-card="${m.key}" draggable="true" data-k="${m.key}">
+    <span class="grip">⠿</span> ${esc(m.name)}${m.locked ? ' <span class="warn">locked</span>' : m.userTarget ? ' <span class="ok">your target</span>' : ''}</li>`).join('') : '';
   $('#machines').innerHTML = S.machines.map((m, i) => {
     const g = gm(m), bays = GAME.bays[g.bay];
-    return `<div class="mcard${m.include ? '' : ' skip'}" data-card="${m.key}">
+    return `<div class="mcard${m.include && !m.locked ? '' : ' skip'}" data-card="${m.key}">
       <div class="row" style="margin-bottom:4px">
         <span class="grip" draggable="true" data-k="${m.key}" title="Drag to change rank">⠿</span><b>${i + 1}.</b>
         <h4>${esc(m.name)}</h4>
         <button data-k="${m.key}" data-act="up" ${i ? '' : 'disabled'}>↑</button><button data-k="${m.key}" data-act="down" ${i < S.machines.length - 1 ? '' : 'disabled'}>↓</button>
         <label class="muted"><input type="checkbox" data-k="${m.key}" data-f="include" ${m.include ? 'checked' : ''}> Plan</label>
+        <label class="muted" title="It keeps running: it keeps the modules it has now and is not planned"><input type="checkbox" data-k="${m.key}" data-f="locked" ${m.locked ? 'checked' : ''}> Locked</label>
         <button data-k="${m.key}" data-act="remove">Remove</button>
       </div>
-      ${currentHtml(m)}${m.missing ? '<div class="warn" style="font-size:12px">Not in the latest save import. Kept with its old settings and layout; Remove it if it is gone.</div>' : ''}
+      ${currentHtml(m)}${m.locked ? '<div class="warn" style="font-size:12px">Locked: it keeps the modules installed now, and no other machine is planned to use them.</div>' : ''}${m.missing ? '<div class="warn" style="font-size:12px">Not in the latest save import. Kept with its old settings and layout; Remove it if it is gone.</div>' : ''}
       <div class="${m.userTarget ? 'ok' : 'muted'}" style="font-size:12px">${m.userTarget ? 'Your target: planned before default targets, in rank order.' : 'Default target: keep what it does now. Change it to make it yours.'}</div>
       <div class="row stack" style="margin:6px 0 0">
         <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
@@ -154,6 +156,7 @@ function renderMachines() {
           : `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`)).join('')}
       </div>
       ${jobHtml(m)}
+      ${g.option ? `<label style="margin:4px 0;display:block"><input type="checkbox" data-k="${m.key}" data-f="${g.option.key}" ${m[g.option.key] ? 'checked' : ''}> ${esc(g.option.label)}${m[g.option.key] && requiredModule(g, true, S.pool) === null && S.pool.length ? ' <span class="bad">(you own none)</span>' : ''}</label>` : ''}
       <div class="row stack" style="margin:4px 0 0">
         ${['1st', '2nd', '3rd'].map((label, r) => `<label>Then ${label}<select data-k="${m.key}" data-f="prio${r}"><option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${m.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('')}
       </div>
@@ -165,7 +168,7 @@ function renderMachines() {
 function renderPool() {
   const total = S.pool.reduce((s, g) => s + g.count, 0);
   const loose = S.pool.reduce((s, g) => s + (g.where?.[0] || 0), 0);
-  $('#pool').innerHTML = total ? `<p class="muted">Module pool: ${total} items (${S.pool.length} kinds); ${total - loose} installed in machines now, ${loose} loose. Every owned module is available to the plan.</p>` : '';
+  $('#pool').innerHTML = total ? `<p class="muted">Module pool: ${total} items (${S.pool.length} kinds); ${total - loose} installed in machines now, ${loose} loose. Every owned module is available to the plan, except those in locked machines.</p>` : '';
 }
 
 function render() {
@@ -177,6 +180,7 @@ function render() {
 // Physical moves: each machine keeps its own copies first, then takes loose ones, then takes from other machines.
 function sourcesFor(results, pool) {
   const stock = pool.map(g => ({ ...(g.where || { 0: g.count }) }));
+  for (const m of S.machines) if (m.locked && m.uid != null) for (const st of stock) delete st[m.uid]; // locked: its modules stay put
   const out = new Map();
   const takeFrom = (id, n, where, list) => {
     const k = Math.min(n, stock[id][where] || 0);
@@ -216,8 +220,9 @@ function renderResults() {
       ${!unreachable ? '' : m.userTarget
         ? '<p class="bad">Your target is not reachable with the modules left after the higher-ranked targets you set; maximised its priorities instead. Rank it higher to put it first.</p>'
         : '<p class="warn">Default target (keep what it does now) not reachable once your targets took their modules; maximised its priorities instead.</p>'}
+      ${g.option && m[g.option.key] && !r.placements.some(p => plan.pool[p.id].name.startsWith(g.option.module)) ? `<p class="warn">No free ${esc(g.option.module)}: planned without it.</p>` : ''}
       <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool)}</figure>
-        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, { blast: !!m.blast }).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         <b>Modules</b><ul class="plain">${(sources.get(m.key) || []).map(l => `<li>${l}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
       </div>
     </div>`;
@@ -230,17 +235,20 @@ function renderResults() {
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
 
 async function planAll() {
-  const ms = S.machines.filter(m => m.include);
+  const ms = S.machines.filter(m => m.include && !m.locked);
   if (!ms.length || !S.pool.length) { $('#status').textContent = 'Import a save (or add machines and modules) first.'; return; }
   stopped = false;
   $('#solve').disabled = true; $('#stop').disabled = false;
-  const avail = S.pool.map(g => g.count);
+  const locked = S.machines.filter(m => m.locked && m.uid != null);
+  const avail = S.pool.map(g => g.count - locked.reduce((n, m) => n + (g.where?.[m.uid] || 0), 0));
   const take = (placements, sign) => placements.forEach(p => (avail[p.id] -= sign));
   const typesFor = (m, costScale) => S.pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
     node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback,
     count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) }));
   const budget = Math.max(1, S.seconds) * 1000;
-  const opts = (weights, mins) => ({ weights, mins, rotate: true, flip: S.flip, heuristicMs: Math.min(3000, budget / 2), timeLimitMs: budget });
+  // A machine option (Furnace: Blast) makes the layout include that module, if one is still free.
+  const required = m => { const id = requiredModule(gm(m), !!m.blast, S.pool.map((g, i) => ({ name: g.name, count: accepts(m, g) ? avail[i] : 0 }))); return id === null ? null : [id]; };
+  const opts = (weights, mins, m) => ({ weights, mins, require: required(m), rotate: true, flip: S.flip, heuristicMs: Math.min(3000, budget / 2), timeLimitMs: budget });
   const step = (pass, i, m) => ($('#status').textContent = `${pass} — ${i + 1}/${ms.length}: ${m.name}…`);
   const pass1 = new Map(), results = [];
 
@@ -251,7 +259,7 @@ async function planAll() {
     const mins = effectiveMins(m);
     if (mins.every(v => v === null)) continue;
     step('Meeting targets', i, m);
-    const r = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 1), opts([0, 0, 0], mins));
+    const r = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 1), opts([0, 0, 0], mins, m));
     if (stopped) return;
     if (r.found) { take(r.placements, 1); pass1.set(m.key, r); } else pass1.set(m.key, null);
   }
@@ -260,12 +268,14 @@ async function planAll() {
     const p1 = pass1.get(m.key), unreachable = p1 === null, weights = priorityWeights(m.priority);
     // A job deadline is a stop point: once it is met, spare modules do not go into more Performance here.
     if (!unreachable && jobPerformance(m) !== null) weights[0] = 0;
+    // Target out of reach: get as close to it as possible first, then the priorities.
+    if (unreachable) effectiveMins(m).forEach((v, k) => { if (v !== null) weights[k] += 1e9; }); // above any priority (1e6 max)
     if (p1) take(p1.placements, -1);
     let r = p1 || null;
     if (weights.some(x => x > 0)) {
       step('Using what is left', i, m);
       const mins = unreachable ? [null, null, null] : effectiveMins(m);
-      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001), opts(weights, mins));
+      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001), opts(weights, mins, m));
       if (stopped) return;
       if (r2.found) r = r2;
     }
@@ -301,7 +311,9 @@ async function importSave(file) {
     // Default targets: keep what the machine does now, for the stats that matter on it
     // (Performance/Quality; Efficiency only lowers power use, so it is left free).
     const matters = k => g.presets.some(p => p.weights[k] > 0 || p.mins[k] !== null);
-    m.mins = [0, null, 2].map(k => (k !== null && matters(k) && x.totals[k] > 0 ? x.totals[k] : null));
+    // Quality on the Furnace only counts in steps of 100: keep the last full step, not the spare points above it.
+    const keep = k => (k === 2 && g.qualityStep ? Math.floor(x.totals[k] / g.qualityStep) * g.qualityStep : x.totals[k]);
+    m.mins = [0, null, 2].map(k => (k !== null && matters(k) && keep(k) > 0 ? keep(k) : null));
     // A running job becomes the default deadline (the whole job at today's pace); once it is met, move on.
     if (x.job && g.progress && x.job.target > x.job.current) {
       m.job = { work: x.job.target, nights: GAME.nightsFor(g, x.totals[0], x.job.target) };
@@ -393,8 +405,10 @@ document.addEventListener('change', e => {
   const num = () => (t.value === '' ? null : parseInt(t.value, 10));
   const f = d.f;
   // Any change to minimums, preset or job makes this machine's target yours (planned before defaults).
-  if (f === 'preset' || f.startsWith('min') || f.startsWith('job')) m.userTarget = true;
+  if (f === 'preset' || f.startsWith('min') || f.startsWith('job') || f === 'blast') m.userTarget = true;
   if (f === 'include') m.include = t.checked;
+  else if (f === 'blast') m.blast = t.checked;
+  else if (f === 'locked') m.locked = t.checked;
   else if (f === 'stage') m.stage = +t.value;
   else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));
   else if (f.startsWith('min')) m.mins[+f.slice(3)] = num();

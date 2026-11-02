@@ -125,19 +125,25 @@ const GAME = {
       name: 'Furnace', id: 'furnace', bay: 'standard', accepts: ['universal', 'furnace'], power: 8,
       // MachineFurnace + IngotPurityHelper.SetPurityFromInput: always 1 ingot per 2 inputs (Blast: 2 per 3).
       // Purity = Low + (2 × ore / inputs) + trunc(Quality / 100), Blast −1, Flux at least +1; clamped Very Low..Perfect.
-      stats: 'Quality: +1 ingot purity grade for every 100 (Blast module takes 1 off). It does not add ingots: always 1 ingot per 2 inputs, or 2 per 3 with Blast. Performance has no effect.',
-      readout: (P, E, Q) => {
-        const b = trunc(Q / 100);
-        return [`Purity bonus: ${b >= 0 ? '+' : ''}${b} grade${Math.abs(b) === 1 ? '' : 's'} (without Blast)`,
+      stats: 'Quality: +1 ingot purity grade for every 100 (Blast module takes 1 off). It only counts in full 100s (Quality 150 = 100), so anything above a step is wasted. It does not add ingots: always 1 ingot per 2 inputs, or 2 per 3 with Blast. Performance has no effect.',
+      qualityStep: 100, // Quality between steps does nothing
+      // With Blast, 3 inputs make 2 ingots: 1/3 more ingots for 1 purity grade less. That pays more per input
+      // at every Quality except where it drops an ingot just below Perfect (+200% value).
+      option: { key: 'blast', module: 'Furnace Module (Blast)', label: 'Use a Blast module: 2 ingots per 3 inputs, 1 purity grade less' },
+      readout: (P, E, Q, opt = {}) => {
+        const b = trunc(Q / 100) - (opt.blast ? 1 : 0);
+        return [`Purity bonus: ${b >= 0 ? '+' : ''}${b} grade${Math.abs(b) === 1 ? '' : 's'}${opt.blast ? ' (Blast: −1 included)' : ' (without Blast)'}`,
           `Ingot purity: scrap only ${GAME.ingotPurity(b)}, half ore ${GAME.ingotPurity(b + 1)}, ore only ${GAME.ingotPurity(b + 2)}`,
+          opt.blast ? 'Ingots: 2 per 3 inputs' : 'Ingots: 1 per 2 inputs',
           `Power: ${powerUse(8, E)} per cycle`];
       },
       presets: [
-        { label: '+1 purity grade (Quality ≥ 100)', mins: [null, null, 100], weights: [0, 1, 0] },
-        { label: '+2 purity grades, Perfect from ore (Quality ≥ 200)', mins: [null, null, 200], weights: [0, 1, 0] },
-        { label: '+3 purity grades (Quality ≥ 300)', mins: [null, null, 300], weights: [0, 1, 0] },
-        { label: 'Perfect from scrap (Quality ≥ 400)', mins: [null, null, 400], weights: [0, 1, 0] },
-        { label: 'Highest Quality', mins: [null, null, null], weights: [0, 0.1, 1] },
+        { label: '+1 purity grade (Quality ≥ 100)', mins: [null, null, 100], weights: [0, 1, 0], blast: false },
+        { label: 'Perfect from ore (Quality ≥ 200)', mins: [null, null, 200], weights: [0, 1, 0], blast: false },
+        { label: 'Perfect from scrap (Quality ≥ 400)', mins: [null, null, 400], weights: [0, 1, 0], blast: false },
+        { label: 'Blast, no purity loss (Quality ≥ 100)', mins: [null, null, 100], weights: [0, 1, 0], blast: true },
+        { label: 'Blast, Perfect from ore (Quality ≥ 300)', mins: [null, null, 300], weights: [0, 1, 0], blast: true },
+        { label: 'Blast, Perfect from scrap (Quality ≥ 500)', mins: [null, null, 500], weights: [0, 1, 0], blast: true },
       ],
     },
     {
@@ -171,8 +177,8 @@ const GAME = {
       presets: [{ label: 'Fastest', mins: [null, null, null], weights: [1, 0.25, 0] }],
     },
     {
-      name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, jobs: [['Complexity 0', 20], ['Complexity 1', 24], ['Complexity 2', 28], ['Complexity 3', 32], ['Complexity 4', 36], ['Complexity 5', 40], ['Complexity 6', 44]], bay: 'standard', accepts: ['universal', 'dna'], power: 12,
-      stats: 'Success chance = 95% − 5% × complexity + Quality/2. Performance/2 speeds progress (base 10).',
+      name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, jobs: [['Extract from a natural seed (complexity 0)', 20], ['Seed complexity + heat 1', 24], ['Seed complexity + heat 2', 28], ['Seed complexity + heat 3', 32], ['Seed complexity + heat 4', 36], ['Seed complexity + heat 5', 40], ['Seed complexity + heat 6', 44], ['Seed complexity + heat 8', 52], ['Seed complexity + heat 10', 60]], bay: 'standard', accepts: ['universal', 'dna'], power: 12,
+      stats: 'Every operation, extract or apply, needs 20 + 4 × (seed complexity + heat) work; a natural donor seed is complexity 0, so an extraction is 20. Success chance = 95% − 5% × (complexity + heat) + Quality/2. Performance/2 speeds progress (base 10).',
       readout: (P, E, Q) => [`Success chance bonus: ${pct(trunc(Q / 2))}`, `Progress per cycle: ${speed(10, P, 2)}`, `Power: ${powerUse(12, E)} per cycle`],
       presets: [
         { label: '+50% success (Quality ≥ 100)', mins: [null, null, 100], weights: [1, 0.5, 0] },
