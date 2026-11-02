@@ -32,7 +32,7 @@ nav a { color: var(--accent); }
       <label>Chem Finisher modules<input type="number" id="finisher" min="0" max="4"></label>
       <label>Evaporator Performance<input type="number" id="evapP"></label>
       <label>Batch size (items)<input type="number" id="batch" min="1" max="50"></label>
-      <label>Lowest grade for yield/fast<select id="minGrade"></select></label>
+      <label>Lowest grade for alternatives<select id="minGrade"></select></label>
     </div>
     <p class="hint">Modules are Chemical Equipment Modules (0-4). They cut Blender loss (35/20/10/5/0%), speed up the Heating Plate (×4 at 3, ×16 at 4) and cut Finisher loss (12/6/3/1/0%).
       The Finisher swaps its loss for contaminant, so Lab Pure (99%) needs 3+ Finisher modules. Shop bottles carry 2-8% random impurity; recipes use the 5% average.</p>
@@ -148,10 +148,13 @@ const TEMPLATES = {
 };
 
 // Three goals: purity first; most units per input item above the chosen grade; fewest nights, then seconds, above it.
+// The grade threshold a purity reaches (99, 90, 80, ...), so purity within one grade does not count.
+const gradeFloor = purity => Math.max(0, ...CHEM.GRADES.map(([p]) => p).filter(p => purity >= p));
 const GOALS = {
   // Ties (purity to 0.1%, same units) go to fewer drying nights, so it does not pour extra alcohol for nothing.
-  purity: { name: 'Highest purity', score: r => Math.round(r.purity * 10) * 1e6 + r.units * 100 - r.nights },
-  yield: { name: 'Most product per input', score: r => (r.purity >= S.minGrade ? 1e9 + r.units * 1e3 - r.nights : 0) + r.purity / 100 },
+  // Main recipe: the best grade reachable, then the most units at that grade, then fewer drying nights.
+  best: { name: 'Most product at the highest grade', score: r => gradeFloor(r.purity) * 1e9 + r.units * 1e3 - r.nights + r.purity / 1e3 },
+  yield: { name: 'More product, lower grade', score: r => (r.purity >= S.minGrade ? 1e9 + r.units * 1e3 - r.nights : 0) + r.purity / 100 },
   fast: { name: 'Fastest', score: r => (r.purity >= S.minGrade ? 1e9 - (r.nights * 86400 + r.seconds) : 0) + r.purity / 100 },
 };
 
@@ -247,14 +250,41 @@ const shownSteps = steps => steps.filter((st, i) => {
   return !empty(st) && !(st.op === 'wait' && empty(steps[i - 1])) && !(st.op === 'dry' && !st.nights);
 });
 
-function recipeHtml(product, goal, e) {
+// Recipe settings in words, to say how a goal's recipe differs from the purest one.
+const PARAM_WORDS = {
+  alc: v => `alcohol ${v}× the mush`, pa: v => (v ? `acid ${v}× the protein` : 'no acid'), T: v => `heat to ${v} °C`, t: v => `heat ${v} s`,
+  t0: v => `first heat ${v} s`, t1: v => `wait ${v} s after the acid`, t3: v => `boil-off ${v} s`,
+  lip: v => `${mL(v)} lipobond per item`, red: v => `${mL(v)} reducing agent per item`, acid: v => `${mL(v)} acid per bottle`, base: v => `${mL(v)} base per bottle`,
+};
+const sameRecipe = (a, b) => JSON.stringify(a.p) === JSON.stringify(b.p);
+function diffHtml(e, pure) {
+  const changes = Object.keys(e.p).filter(k => e.p[k] !== pure.p[k] && PARAM_WORDS[k]).map(k => `${PARAM_WORDS[k](e.p[k])} (main: ${PARAM_WORDS[k](pure.p[k])})`);
+  const r = e.r, q = pure.r, d = [];
+  if (r.units !== q.units) d.push(`${r.units > q.units ? '+' : ''}${r.units - q.units} units`);
+  if (r.nights !== q.nights) d.push(`${r.nights < q.nights ? `${q.nights - r.nights} fewer` : `${r.nights - q.nights} more`} night(s) drying`);
+  d.push(`${(r.purity - q.purity).toFixed(1)}% purity`);
+  return `<div class="hint" style="margin:4px 0">Differs from the main recipe: ${changes.join(', ') || 'same settings'}. Result: ${d.join(', ')}.</div>`;
+}
+
+// An alternative is only shown when it gains something real over the main recipe:
+// at least 10% (and 2) more units, or fewer drying nights.
+function worthIt(goal, e, main) {
+  if (sameRecipe(e, main) || e.r.purity < S.minGrade) return false;
+  if (goal === 'yield') return e.r.units >= main.r.units * 1.1 && e.r.units - main.r.units >= 2;
+  if (goal === 'fast') return e.r.nights < main.r.nights;
+  return true;
+}
+
+function recipeHtml(product, goal, e, pure) {
   const r = e.r, P = CHEM.PRODUCTS[product];
+  // Same settings as the purest recipe: say so in one line instead of repeating it.
+  if (goal !== 'best' && !worthIt(goal, e, pure)) return '';
   const inputs = TEMPLATES[product].unit === 'bottle' ? `${S.batch} precursor bottle${S.batch === 1 ? '' : 's'}` : `${S.batch} ${CHEM.ITEMS[TEMPLATES[product].input].name}`;
   return `<div class="recipe"><b>${GOALS[goal].name}</b>
     <div>${r.purity.toFixed(1)}% · <span class="${r.purity >= S.minGrade ? 'ok' : 'bad'}">${r.grade}</span></div>
     <div>${r.units} × ${P.name} from ${inputs}${r.wet ? ' <span class="bad">(still wet)</span>' : ''}</div>
     <div class="muted">${r.nights} night(s) drying, ${r.seconds} s of work</div>
-    ${goal !== 'purity' && r.purity < S.minGrade ? `<div class="bad">Cannot reach ${CHEM.grade(S.minGrade)}: this is the purest recipe instead.</div>` : ''}
+    ${goal !== 'best' && pure ? diffHtml(e, pure) : ''}
     <ol>${shownSteps(e.steps).map(st => `<li>${stepHtml(st)}${limitHtml(st)}</li>`).join('')}<li>Chem Finisher: ${P.name}</li></ol>
     <details><summary class="muted">Final mix</summary><div class="muted">${Object.entries(r.container.l).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k.replace(/_/g, ' ')} ${mL(v)}`).join(', ')}</div></details>
   </div>`;
@@ -266,7 +296,7 @@ function render(results) {
   $('#minGrade').innerHTML = CHEM.GRADES.filter(([p]) => p > 0).map(([p, name]) => `<option value="${p}" ${S.minGrade === p ? 'selected' : ''}>${name} (${p}%+)</option>`).join('');
   $('#products').innerHTML = Object.entries(CHEM.PRODUCTS).map(([id, P]) => `<div class="ccard"><h4>${P.name}</h4>
     <div class="muted">Active ingredient: ${P.active.replace(/_/g, ' ')} · ${mL(P.volume)} per unit</div>
-    ${results?.[id] ? `<div class="recipes">${Object.keys(GOALS).map(g => recipeHtml(id, g, results[id][g])).join('')}</div>` : '<p class="hint">Press "Work out recipes".</p>'}</div>`).join('');
+    ${results?.[id] ? `<div class="recipes">${Object.keys(GOALS).map(g => recipeHtml(id, g, results[id][g], results[id].best)).join('')}</div>${Object.keys(GOALS).every(g => g === 'best' || !worthIt(g, results[id][g], results[id].best)) ? '<p class="muted">No other recipe is worth it: none gives 10% more product (at your lowest grade or better) or fewer drying nights.</p>' : ''}` : '<p class="hint">Press "Work out recipes".</p>'}</div>`).join('');
 }
 
 async function solveAll() {
