@@ -19,6 +19,8 @@ ol li { padding: 2px 0; }
   <div id="view"></div>
   <p class="hint">Shows the latest plan (All Machines Planner) and saved layouts. Updates when you re-plan. Opened with the "Open overlay" button, this window stays on top of the game (Chrome/Edge, game windowed or borderless). With overlay.ahk running, Ctrl+Alt+O hides and shows it.</p>
 </div>
+<script src="game-data.js"></script>
+<script src="solver.js"></script>
 <script src="ui.js"></script>
 <script>
 const $ = s => document.querySelector(s);
@@ -28,9 +30,9 @@ const read = key => { try { return JSON.parse(localStorage.getItem(key)) || {}; 
 function entries() {
   const out = [], plan = read('ps-plan-v1').lastPlan;
   if (plan) for (const m of plan.machines)
-    out.push({ title: `Plan · ${m.name}`, layout: m.layout, placements: m.placements, modules: plan.pool, totals: m.totals, sources: m.sources });
+    out.push({ title: `Plan · ${m.name}`, name: m.name, at: plan.at, layout: m.layout, placements: m.placements, modules: plan.pool, totals: m.totals, items: m.items || [], sources: m.sources || [] });
   for (const x of read('ps-module-optimiser-v3').savedLayouts || [])
-    out.push({ title: `Saved · ${x.machineName} — ${x.stageName}`, layout: x.layout, placements: x.placements, modules: x.modules, totals: x.totals, sources: [] });
+    out.push({ title: `Saved · ${x.machineName} — ${x.stageName}`, layout: x.layout, placements: x.placements, modules: x.modules, totals: x.totals, items: [], sources: [], inserted: x.inserted || [] });
   return out;
 }
 
@@ -44,17 +46,18 @@ function render() {
   try { localStorage.setItem('ps-overlay-pick', pick); } catch {}
   $('#pick').innerHTML = list.map((e, i) => `<option value="${i}" ${i === pick ? 'selected' : ''}>${esc(e.title)}</option>`).join('');
   const e = list[pick];
-  const items = e.placements.map((p, n) => {
-    const m = e.modules[p.id] || { name: '?' };
-    return `<li><span class="swatch" style="background:${color(n + 1)}"></span><b>${m.node ? 'N' : ''}${n + 1}</b> ${esc(m.name)}${m.details ? ` <span class="muted">— ${esc(m.details)}</span>` : ''}</li>`;
-  }).join('');
-  $('#view').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 40)}
-    <div style="margin-top:6px">${STATS.map((s, k) => `${s} ${fmt(e.totals[k])}%`).join(' · ')}</div>
-    <ol>${items}</ol>
+  // Plan items tick here and in the planner (shared key); saved layouts show their ticks from the single-machine page.
+  const list2 = e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items)
+    : checklistHtml(e.placements, e.modules, e.inserted, '', [], true);
+  $('#view').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 40, e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}
+    ${legendHtml()}
+    <div style="margin-top:6px">${totalsHtml(e.totals)}</div>
+    ${list2}
     ${e.sources.length ? `<b>Where the modules come from</b><ul class="plain" style="margin:4px 0;padding-left:18px">${e.sources.map(l => `<li>${l}</li>`).join('')}</ul>` : ''}`;
 }
 
 $('#pick').addEventListener('change', e => { pick = +e.target.value; render(); });
+document.addEventListener('change', e => { const d = e.target.dataset; if (d.install !== undefined) { setInstalled(+d.at, d.install, +d.component, e.target.checked); render(); } });
 $('#prev').addEventListener('click', () => { pick--; render(); });
 $('#next').addEventListener('click', () => { pick++; render(); });
 document.addEventListener('keydown', e => { if (e.key === 'ArrowLeft') { pick--; render(); } if (e.key === 'ArrowRight') { pick++; render(); } });

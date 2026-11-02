@@ -131,7 +131,7 @@ function renderSavedLayouts() {
     const done = x.inserted.filter(Boolean).length;
     const components = x.placements.map((p, n) => {
       const m = x.modules[p.id];
-      return `<div class="component-row${x.inserted[n] ? ' done' : ''}" style="--component-color:${color(n + 1)}">
+      return `<div class="component-row${x.inserted[n] ? ' done' : ''}" style="--component-color:${moduleColors(m)[0]}">
         <label><input type="checkbox" data-layout="${i}" data-component="${n}" ${x.inserted[n] ? 'checked' : ''}>
         <span class="component-name"><b>${m.node ? 'Node' : 'Module'} ${n + 1}:</b> ${esc(m.name)}</span></label>
         <span class="muted">${p.cells.length} cell${p.cells.length === 1 ? '' : 's'}</span>
@@ -141,8 +141,8 @@ function renderSavedLayouts() {
       <div class="fields">
         <div class="layout-actions"><b>${esc(x.machineName)} — ${esc(x.stageName)}</b><button class="delete-layout" data-delete-layout="${i}">Delete layout</button></div>
         <span class="muted">${new Date(x.savedAt).toLocaleString()} · ${x.placements.length} components</span>
-        ${boardHtml(x.layout, x.placements, x.modules)}
-        <span>${STATS.map((s, k) => `${s}: ${fmt(x.totals[k])}%`).join(' · ')}</span>
+        ${boardHtml(x.layout, x.placements, x.modules, 30, x.inserted)}
+        <span>${totalsHtml(x.totals)}</span>
         <div class="layout-actions"><b>Installation checklist</b><span class="progress">${done}/${x.placements.length} installed</span></div>
         <div class="component-list">${components}</div>
       </div>
@@ -193,7 +193,7 @@ function render() {
   $('#mods').innerHTML = S.modules.map((m, i) => `<div class="mod${accepted(m) ? '' : ' off'}" data-m="${i}">${shapeHtml(m, i)}
     <div class="fields">
       <div class="row" style="margin:0">
-        <span class="swatch" style="background:${color(i)}"></span>
+        <span class="swatch" style="background:${moduleColor(m)}"></span>
         <input data-f="name" value="${esc(m.name)}" aria-label="Name" style="flex:1">
       </div>
       ${m.node ? '<span class="muted">Node: no own stats. Gets 20% of the base stats of each module touching it.</span>' : `
@@ -236,14 +236,14 @@ function renderResult() {
   const mins = r.mins;
   const tot = STATS.map((s, k) => {
     const need = mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`;
-    return `<tr><td>${s}</td><td>${fmt(totals[k])}%${need}</td></tr>`;
+    return `<tr><td>${statSpan(k)}</td><td>${statSpan(k, fmt(totals[k]) + "%")}${need}</td></tr>`;
   }).join('');
   const readout = machine().readout(...totals, { blast: r.blast }).map(line => `<tr><td colspan="2">${esc(line)}</td></tr>`).join('');
   const rows = r.placements.map((p, n) => {
     const m = r.mods[p.id];
-    return `<tr><td><span class="swatch" style="background:${color(n + 1)}"></span>${m.node ? 'N' : ''}${n + 1}. ${esc(m.name)}</td><td>${items[n].map(fmt).join(' / ')}</td></tr>`;
+    return `<tr><td><span class="swatch" style="background:${moduleColor(m)}"></span>${m.node ? 'N' : ''}${n + 1}. ${esc(m.name)}</td><td>${items[n].map(fmt).join(' / ')}</td></tr>`;
   }).join('');
-  $('#result').innerHTML = `${board}
+  $('#result').innerHTML = `${board}${legendHtml()}
     ${r.note ? `<p class="${r.noteClass}">${esc(r.note)}</p>` : ''}
     <table><tr><td colspan="2"><b>Totals</b></td></tr>${tot}</table>
     <table><tr><td colspan="2"><b>${esc(machine().name)}</b></td></tr>${readout}</table>

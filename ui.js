@@ -27,6 +27,53 @@ function moduleDetails(m) {
   return `${shapeName(m.cells)} · ${stats}`;
 }
 
+// Stat colours, the same everywhere (style.css): Performance red, Efficiency green, Quality yellow.
+const STAT_COLORS = ['var(--perf)', 'var(--eff)', 'var(--qual)'];
+const statSpan = (k, text = STATS[k]) => `<span class="st${k}">${text}</span>`;
+// A module's colours: its strongest positive stat, plus a second one if that is at least a third as big.
+// Nodes are blue; modules with no positive stat (e.g. Blast) grey.
+function moduleColors(m) {
+  if (m && m.node) return ['var(--node)'];
+  const pos = (m?.base || []).map((v, k) => [v, k]).filter(([v]) => v > 0).sort((a, b) => b[0] - a[0]);
+  if (!pos.length) return ['var(--nostat)'];
+  return pos.filter(([v], i) => i === 0 || (i === 1 && v >= pos[0][0] / 3)).map(([, k]) => STAT_COLORS[k]);
+}
+function moduleColor(m) {
+  const c = moduleColors(m);
+  return c.length > 1 ? `linear-gradient(135deg, ${c[0]} 55%, ${c[1]} 55%)` : c[0];
+}
+const statsHtml = base => base.map((v, k) => (v ? statSpan(k, `${'PEQ'[k]}${fmt(v)}`) : '')).filter(Boolean).join(' ') || 'no stats';
+const moduleDetailsHtml = m => `${esc(shapeName(m.cells))} · ${m.node ? 'node (no own stats)' : statsHtml(m.base)}`;
+const totalsHtml = totals => STATS.map((s, k) => statSpan(k, `${s} ${fmt(totals[k])}%`)).join(' · ');
+const legendHtml = () => `<div class="legend">${STATS.map((s, k) => `<span><span class="swatch" style="background:${STAT_COLORS[k]}"></span>${s}</span>`).join('')}<span><span class="swatch" style="background:var(--node)"></span>Node</span><span><span class="swatch" style="background:var(--nostat)"></span>No bonus</span></div>`;
+
+// Install checklist: one row per placed item, ticked once it is in the machine (ticked rows grey out).
+// attrs: data attributes for the checkboxes; sources[n]: where item n comes from.
+function checklistHtml(placements, modules, done, attrs, sources = [], disabled = false) {
+  const rows = placements.map((p, n) => {
+    const m = modules[p.id] || { name: '?', cells: p.cells, base: [0, 0, 0] };
+    const details = m.base || m.node ? moduleDetailsHtml({ cells: p.cells, ...m }) : esc(m.details || '');
+    return `<div class="component-row${done[n] ? ' done' : ''}" style="--component-color:${moduleColors(m)[0]}">
+      <label><input type="checkbox" ${attrs} data-component="${n}" ${done[n] ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+      <span class="swatch" style="background:${moduleColor(m)}"></span><span class="component-name"><b>${m.node ? 'N' : ''}${n + 1}.</b> ${esc(m.name)}</span></label>
+      <span class="muted">${details}${sources[n] ? `<br>${esc(sources[n])}` : ''}</span></div>`;
+  }).join('');
+  const count = done.filter(Boolean).length;
+  return `<div class="layout-actions"><b>Install checklist</b><span class="progress">${count}/${placements.length} installed</span></div><div class="component-list">${rows}</div>`;
+}
+
+// Which planned items are ticked as installed. Kept under its own key so the planner and the overlay
+// can both tick without overwriting each other's saved state. Reset by a new plan (different `at`).
+const INSTALLED_KEY = 'ps-plan-installed';
+function installedOf(at) {
+  try { const x = JSON.parse(localStorage.getItem(INSTALLED_KEY)); return x && x.at === at ? x.done : {}; } catch { return {}; }
+}
+function setInstalled(at, name, n, on) {
+  const done = installedOf(at);
+  (done[name] = done[name] || [])[n] = on;
+  try { localStorage.setItem(INSTALLED_KEY, JSON.stringify({ at, done })); } catch {}
+}
+
 // Priority order [statIndex|null x3] as weights: each rank counts 1000x the next, so a higher-priority
 // stat always wins (stat totals stay well under 1000).
 function priorityWeights(priority) {
@@ -52,7 +99,7 @@ function requiredModule(machineDef, on, modules) {
 }
 
 // Bay grid with each placed item outlined and numbered. modules[id] gives name/node for a placement id.
-function boardHtml(layout, placements, modules, cellSize = 30) {
+function boardHtml(layout, placements, modules, cellSize = 30, done = []) {
   const cols = layout[0].length, rows = layout.length;
   const owner = {};
   placements.forEach((p, n) => p.cells.forEach((cell, part) => owner[cell] = { n, part, id: p.id }));
@@ -71,7 +118,7 @@ function boardHtml(layout, placements, modules, cellSize = 30) {
     }).join(';');
     const origin = p.cells[0] === cell;
     const label = m.node ? `N${here.n + 1}` : `${here.n + 1}`;
-    html += `<div class="part${origin ? ' origin' : ''}" style="background:${color(here.n + 1)};${borders}" title="${esc(m.name)} · Component ${here.n + 1} · Cell ${here.part + 1}${origin ? ' · placement origin' : ''}">${label}</div>`;
+    html += `<div class="part${origin ? ' origin' : ''}${done[here.n] ? ' done' : ''}" style="background:${moduleColor(m)};${borders}" title="${esc(m.name)} · Component ${here.n + 1} · Cell ${here.part + 1}${origin ? ' · placement origin' : ''}">${label}</div>`;
   }
   return html + '</div>';
 }

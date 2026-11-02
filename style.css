@@ -1,4 +1,4 @@
-:root { --bg:#15171a; --panel:#1f2226; --line:#363a40; --text:#e6e6e6; --muted:#9aa0a6; --cell:#2c3036; --accent:#5fbf6a; --warn:#e0a84f; --bad:#e06c6c; }
+:root { --bg:#15171a; --panel:#1f2226; --line:#363a40; --text:#e6e6e6; --muted:#9aa0a6; --cell:#2c3036; --accent:#5fbf6a; --warn:#e0a84f; --bad:#e06c6c; --perf:#e8645f; --eff:#5fbf6a; --qual:#e8c547; --node:#6aa8e0; --nostat:#8a8f96; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
 header { max-width: none; margin: 0 auto; padding: 16px 16px 0; }
@@ -63,3 +63,8 @@ td { padding: 2px 10px 2px 0; }
 }
 /* Lists flow into extra columns when their panel is wide enough. */
 #mods { display: grid; column-gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
+/* Stat colours, the same on every page: Performance red, Efficiency green, Quality yellow. */
+.st0 { color: var(--perf); } .st1 { color: var(--eff); } .st2 { color: var(--qual); }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 4px 0; }
+.component-row .muted { text-align: right; }
+.grid div.part.done { opacity: .3; } /* ticked as installed */

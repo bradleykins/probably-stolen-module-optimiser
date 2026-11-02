@@ -187,19 +187,18 @@ function sourcesFor(results, pool) {
     if (k > 0) { stock[id][where] -= k; list.push([where, k]); }
     return n - k;
   };
+  // Per placed item, in placement order: where to get it (already here, loose, or from another machine).
   for (const { m, r } of results) {
-    const used = {};
-    for (const p of r.placements) used[p.id] = (used[p.id] || 0) + 1;
-    const lines = [];
-    for (const [id, n] of Object.entries(used)) {
+    const items = r.placements.map(p => {
       const from = [];
-      let need = takeFrom(+id, n, m.uid ?? -1, from);
-      need = takeFrom(+id, need, 0, from);
-      for (const where of Object.keys(stock[id])) if (need > 0 && where !== '0') need = takeFrom(+id, need, where, from);
-      const text = from.map(([where, k]) => (String(where) === String(m.uid) ? `${k} already here` : where == 0 ? `${k} loose` : `${k} from ${machineName(where)}`)).join(', ');
-      lines.push(`${esc(pool[id].name)} ×${n} <span class="muted">— ${esc(moduleDetails(pool[id]))}${text ? `; ${esc(text)}` : ''}</span>`);
-    }
-    out.set(m.key, lines);
+      let need = takeFrom(p.id, 1, m.uid ?? -1, from);
+      need = takeFrom(p.id, need, 0, from);
+      for (const where of Object.keys(stock[p.id])) if (need > 0 && where !== '0') need = takeFrom(p.id, need, where, from);
+      if (!from.length) return '';
+      const [where] = from[0];
+      return String(where) === String(m.uid) ? 'already in this machine' : where == 0 ? 'loose (in storage)' : `take from ${machineName(where)}`;
+    });
+    out.set(m.key, items);
   }
   return out;
 }
@@ -213,7 +212,7 @@ function renderResults() {
     const now = m.current ? `<figure><figcaption>Now</figcaption>${boardHtml(layout, m.current.installed.map((x, id) => ({ id, cells: x.cells })), m.current.installed.map(x => x.module), 22)}</figure>` : '';
     if (!r) return `<div class="mcard"><h4>${esc(m.name)}</h4><p class="muted">No target or priorities: nothing planned.</p></div>`;
     const totals = evaluate(grid, r.placements, byId).totals, mins = effectiveMins(m);
-    const tot = STATS.map((s, k) => `${s} ${fmt(totals[k])}%${mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`}`).join(' · ');
+    const tot = STATS.map((s, k) => `${statSpan(k, `${s} ${fmt(totals[k])}%`)}${mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`}`).join(' · ');
     const job = m.job?.work > 0 && g.progress ? `<div>Job of ${m.job.work} work: ${GAME.nightsFor(g, totals[0], m.job.work)} night(s) at ${GAME.speedOf(g, totals[0])}/night${m.job.nights ? ` (target ≤ ${m.job.nights})` : ''}</div>` : '';
     return `<div class="mcard">
       <h4>${esc(m.name)}</h4>
@@ -221,15 +220,16 @@ function renderResults() {
         ? '<p class="bad">Your target is not reachable with the modules left after the higher-ranked targets you set; maximised its priorities instead. Rank it higher to put it first.</p>'
         : '<p class="warn">Default target (keep what it does now) not reachable once your targets took their modules; maximised its priorities instead.</p>'}
       ${g.option && m[g.option.key] && !r.placements.some(p => plan.pool[p.id].name.startsWith(g.option.module)) ? `<p class="warn">No free ${esc(g.option.module)}: planned without it.</p>` : ''}
-      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool)}</figure>
+      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, installedOf(plan.at)[m.name] || [])}</figure>
         <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, { blast: !!m.blast }).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
-        <b>Modules</b><ul class="plain">${(sources.get(m.key) || []).map(l => `<li>${l}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
+        </div>
       </div>
+      ${r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
     </div>`;
   }).join('');
   const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
   const stale = plan.stale ? '<p class="warn">This plan was made before your last save import. Plan again to use the new save.</p>' : '';
-  $('#results').innerHTML = stale + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n} <span class="muted">— ${esc(moduleDetails(g))}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
+  $('#results').innerHTML = stale + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
 }
 
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
@@ -282,12 +282,12 @@ async function planAll() {
     if (r) take(r.placements, 1);
     results.push({ m, r, unreachable });
   }
-  plan = { results, avail, types: typesFor(ms[0], 0), pool: S.pool };
+  plan = { results, avail, types: typesFor(ms[0], 0), pool: S.pool, at: Date.now() };
   // Keep a compact copy for overlay.html.
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r), S.pool);
-  S.lastPlan = { at: Date.now(), pool: S.pool.map(g => ({ name: g.name, node: !!g.node, details: moduleDetails(g) })),
+  S.lastPlan = { at: plan.at, pool: S.pool.map(g => ({ name: g.name, node: !!g.node, base: g.base, cells: g.cells, details: moduleDetails(g) })),
     machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
-      totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, sources: sources.get(m.key) || [] })) };
+      totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, items: sources.get(m.key) || [], sources: [] })) };
   save();
   $('#status').textContent = `Planned ${ms.length} machine(s).`;
   $('#solve').disabled = false; $('#stop').disabled = true; worker = null;
@@ -397,6 +397,7 @@ document.addEventListener('dragend', () => {
 
 document.addEventListener('change', e => {
   const t = e.target, d = t.dataset;
+  if (d.install !== undefined && plan) { setInstalled(plan.at, d.install, +d.component, t.checked); renderResults(); return; }
   if (t.id === 'saveFile') { importSave(t.files[0]); t.value = ''; return; }
   if (t.id === 'seconds') { S.seconds = Math.max(1, +t.value || 6); save(); return; }
   if (t.id === 'flip') { S.flip = t.checked; save(); return; }
@@ -419,6 +420,7 @@ document.addEventListener('change', e => {
   plan = null; render();
 });
 
+window.addEventListener('storage', e => { if (e.key === INSTALLED_KEY && plan) renderResults(); }); // ticked in the overlay
 render();
 </script>
 </body>
