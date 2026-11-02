@@ -186,9 +186,12 @@ const CHEM = (() => {
       const loss = BLENDER_LOSS[modules] / 100;
       for (const [id, v] of Object.entries(ITEMS[item].blend)) add(s, id, Math.round(v * count * (1 - loss)));
     },
-    pour(s, { item, amount }) { // amount in µL of the bottle's contents
-      const b = ITEMS[item].bottle, full = Object.values(b).reduce((x, y) => x + y, 0);
+    pour(s, st) { // amount in µL of the bottle's contents
+      const { item } = st, b = ITEMS[item].bottle, full = Object.values(b).reduce((x, y) => x + y, 0);
       const imp = ITEMS[item].impure ? 0.05 : 0;
+      // ratioOf: pour until the container holds `ratio` × what it has of that liquid (alcohol 5× the mush).
+      if (st.ratioOf) { const share = ((b[item] || 0) / full) * (1 - imp); st.amount = share > 0 ? Math.round((get(s, st.ratioOf) * st.ratio) / share) : 0; }
+      const amount = st.amount;
       for (const [id, v] of Object.entries(b)) add(s, id, Math.round(amount * (v / full) * (1 - imp)));
       for (const id of IMPURITIES) if (imp) add(s, id, Math.round(amount * imp / IMPURITIES.length));
     },
@@ -231,7 +234,9 @@ const CHEM = (() => {
     let seconds = 0, nights = 0;
     for (const st of steps) {
       st.present = Object.keys(s.l).filter(id => s.l[id] > 0); // what was in the container when this step started
+      st.before = { ...s.l };
       STEPS[st.op](s, st);
+      st.after = { ...s.l }; // so a recipe can say what the container shows, not what was poured
       if (st.seconds) seconds += st.seconds;
       if (st.nights) nights += st.nights;
     }

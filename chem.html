@@ -62,43 +62,52 @@ const acidBase = p => [
   ...(p.base > 0 ? [{ op: 'pour', item: 'base', amount: p.base }, { op: 'wait', seconds: 60 }] : []),
 ];
 
+// Protein: acid equal to it settles it all out (less acid leaves some in: more units, lower purity),
+// then base cancels any acid left over.
+const protein = ratio => [
+  ...(ratio > 0 ? [{ op: 'pour', item: 'acid', ratioOf: 'protein', ratio }, { op: 'wait', seconds: 60 }] : []),
+  { op: 'pour', item: 'base', ratioOf: 'acid', ratio: 1 }, { op: 'wait', seconds: 60 },
+];
+// Alcohol as a multiple of the mush in the container (the game's extraction checks alcohol vs mush).
+const alcohol = (mush, ratio) => ({ op: 'pour', item: 'alcohol', ratioOf: mush, ratio });
+
 // Recipe templates: parameters -> steps. Ranges are what the optimiser searches.
 const n = () => S.batch;
 const TEMPLATES = {
   dream_dust: {
     input: 'dream_cap',
-    params: { alc: [20000, 300000], T: [40, 49], t: [20, 400], acid: [0, 6000], base: [0, 6000] }, // per cap for amounts; T stays under the 50 °C mush limit
+    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] }, // alc = × the mush; T stays under the 50 °C mush limit
     steps: p => dry([
       { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
-      { op: 'pour', item: 'alcohol', amount: p.alc * n() },
+      alcohol('dream_cap_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
       { op: 'filter', size: 22 },
-      ...acidBase({ acid: p.acid * n(), base: p.base * n() }),
+      ...protein(p.pa),
       { op: 'filter', size: 22 },
     ]),
   },
   nightmare_dust: {
     input: 'nightmare_cap',
-    params: { alc: [20000, 300000], T: [40, 49], t: [20, 400], acid: [0, 6000], base: [0, 6000] },
+    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] },
     steps: p => dry([
       { op: 'blend', item: 'nightmare_cap', count: n(), modules: S.blender },
-      { op: 'pour', item: 'alcohol', amount: p.alc * n() },
+      alcohol('nightmare_cap_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
       { op: 'filter', size: 22 },
-      ...acidBase({ acid: p.acid * n(), base: p.base * n() }),
+      ...protein(p.pa),
       { op: 'filter', size: 22 },
     ]),
   },
   caffeine_pill: {
     input: 'coffee_bean',
-    params: { lip: [0, 3000], alc: [20000, 400000], T: [50, 78], t: [20, 400], acid: [0, 20000], base: [0, 20000] },
+    params: { lip: [0, 3000], alc: [0.25, 8, 0.25], pa: [0, 1, 0.25], T: [50, 78], t: [20, 400] },
     steps: p => dry([
       { op: 'blend', item: 'coffee_bean', count: n(), modules: S.blender },
       ...(p.lip > 0 ? [{ op: 'pour', item: 'lipobond_agent', amount: p.lip * n() }, { op: 'wait', seconds: 60 }] : []),
-      { op: 'pour', item: 'alcohol', amount: p.alc * n() },
+      alcohol('coffee_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate, boilOff: 'lipobond_agent' },
       { op: 'filter', size: 22 },
-      ...acidBase({ acid: p.acid * n(), base: p.base * n() }),
+      ...protein(p.pa),
       { op: 'filter', size: 22 },
     ]),
   },
@@ -117,11 +126,11 @@ const TEMPLATES = {
   },
   pink_alt_injector: {
     input: 'dream_cap',
-    params: { alc: [20000, 300000], t0: [20, 300], red: [0, 20000], lip: [0, 10000], T: [45, 55], t: [20, 600], t3: [0, 600], acid: [0, 6000], base: [0, 6000] },
+    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], t0: [20, 300], red: [0, 20000], lip: [0, 10000], T: [45, 55], t: [20, 600], t3: [0, 600] },
     steps: p => {
       const extract = dry([
         { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
-        { op: 'pour', item: 'alcohol', amount: p.alc * n() },
+        alcohol('dream_cap_mush', p.alc),
         { op: 'heat', target: 45, seconds: p.t0, high: true, modules: S.plate },
         { op: 'filter', size: 22 },
       ]);
@@ -131,7 +140,7 @@ const TEMPLATES = {
         { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
         ...(p.t3 > 0 ? [{ op: 'heat', target: 58, seconds: p.t3, high: true, modules: S.plate, boilOff: 'lipobond_agent' }] : []), // boil off leftover lipobond (extract is safe below 60)
         { op: 'filter', size: 22 },
-        ...acidBase({ acid: p.acid * n(), base: p.base * n() }),
+        ...protein(p.pa),
         { op: 'filter', size: 22 },
       ]);
     },
@@ -140,8 +149,9 @@ const TEMPLATES = {
 
 // Three goals: purity first; most units per input item above the chosen grade; fewest nights, then seconds, above it.
 const GOALS = {
-  purity: { name: 'Highest purity', score: r => r.purity * 1e6 + r.units },
-  yield: { name: 'Most product per input', score: r => (r.purity >= S.minGrade ? 1e9 + r.units * 1e3 : 0) + r.purity },
+  // Ties (purity to 0.1%, same units) go to fewer drying nights, so it does not pour extra alcohol for nothing.
+  purity: { name: 'Highest purity', score: r => Math.round(r.purity * 10) * 1e6 + r.units * 100 - r.nights },
+  yield: { name: 'Most product per input', score: r => (r.purity >= S.minGrade ? 1e9 + r.units * 1e3 - r.nights : 0) + r.purity / 100 },
   fast: { name: 'Fastest', score: r => (r.purity >= S.minGrade ? 1e9 - (r.nights * 86400 + r.seconds) : 0) + r.purity / 100 },
 };
 
@@ -151,14 +161,23 @@ function evaluate(product, p) {
 }
 
 // Random search, then shrink around the best: a few hundred simulations per goal.
-function optimise(product, goal) {
+// Three restarts, and each goal also tries the other goals' winners, so one unlucky search does not stick.
+function optimiseAll(product) {
+  const runs = Object.keys(GOALS).flatMap(g => [7, 99, 4242].map(seed => optimise(product, g, seed)));
+  return Object.fromEntries(Object.keys(GOALS).map(g => {
+    let best = null;
+    for (const e of runs) { const s = GOALS[g].score(e.r); if (!best || s > best.s) best = { ...e, s }; }
+    return [g, best];
+  }));
+}
+
+function optimise(product, goal, seed = 7) {
   const T = TEMPLATES[product], keys = Object.keys(T.params);
-  let seed = 7;
   const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   const pick = (k, around, width) => {
-    const [lo, hi] = T.params[k];
+    const [lo, hi, step = 1] = T.params[k];
     const v = around === undefined ? lo + rand() * (hi - lo) : around + (rand() - 0.5) * width * (hi - lo);
-    return Math.round(Math.min(hi, Math.max(lo, v)));
+    return Math.round(Math.min(hi, Math.max(lo, v)) / step) * step;
   };
   let best = null;
   const consider = p => { const e = evaluate(product, p); e.s = GOALS[goal].score(e.r); if (!best || e.s > best.s) best = e; };
@@ -167,14 +186,50 @@ function optimise(product, goal) {
   return best;
 }
 
-function stepText(st) {
+// Steps say amounts the way the container shows them (mL of each liquid in it), compared with what is
+// already there: "alcohol 5× the mush", "acid about equal to the protein".
+const MUSH = ['dream_cap_mush', 'nightmare_cap_mush', 'coffee_mush'];
+const liq = id => id.replace(/_/g, ' ');
+const has = (l, id) => (l?.[id] || 0) > 0;
+const times = (a, b) => `${Math.round((a / b) * 10) / 10}×`;
+function stepHtml(st) {
+  const b = st.before || {}, a = st.after || {}, name = esc(CHEM.ITEMS[st.item]?.name || '');
+  const mush = MUSH.find(id => has(b, id));
   switch (st.op) {
-    case 'blend': return `Blend ${st.count} × ${CHEM.ITEMS[st.item].name} into a container`;
-    case 'pour': return `Pour in ${mL(st.amount)} of ${CHEM.ITEMS[st.item].name}`;
-    case 'heat': return `Heating Plate on high, target ${st.target} °C, for ${st.seconds} s`;
-    case 'wait': return `Wait ${st.seconds} s`;
-    case 'filter': return 'Pour through a Water Filter (size 22) into a clean container';
-    case 'dry': return `Evaporator until dry: ${st.nights} night${st.nights === 1 ? '' : 's'}`;
+    case 'blend': {
+      const m = MUSH.find(id => has(a, id));
+      return `Blend ${st.count} × ${name}.${m ? ` The container now shows about <b>${mL(a[m])} of ${liq(m)}</b>${has(a, 'protein') ? ` and ${mL(a.protein)} of protein` : ''}.` : ''}`;
+    }
+    case 'pour': {
+      const got = (a[st.item] || 0) - (b[st.item] || 0), share = got / st.amount;
+      const bottle = share > 0 && share < 0.99 ? ` (${mL(st.amount)} poured: the bottle is ${Math.round(share * 100)}% ${liq(st.item)})` : '';
+      if (st.item === 'alcohol' && mush) {
+        const coffee = mush === 'coffee_mush';
+        const r = got / b[mush];
+        const rule = coffee ? 'Caffeine extraction already works at full strength from 0.75× the coffee mush.'
+          : r < 4.95 ? 'This is under 5×, so some mush turns into plant matter instead of extract; in exchange there is less to dry.'
+          : 'At 5× every bit of mush that is extracted counts fully.';
+        const tip = coffee ? '' : `<div class="hint">Less alcohol: the extraction needs alcohol at 5× the mush <i>currently</i> in the container and does not use it up. So add the blended mush in portions instead, heating each until the mush reads 0: with 25 mL portions, about ${mL(125000)} of alcohol in the container does the whole batch.</div>`;
+        return `Pour ${name} until the container shows <b>alcohol ${times(got, b[mush])} the ${liq(mush)}</b>: ${mL(b[mush])} of mush, so about ${mL(got)} of alcohol${bottle}. ${rule}${tip}`;
+      }
+      if (st.ratioOf === 'protein') return `Add <b>${name} ${st.ratio === 1 ? 'equal to the protein' : `${st.ratio}× the protein`}</b>: the container shows ${mL(b.protein)} of protein, so about ${mL(got)} of acid${bottle}.${st.ratio < 1 ? ' Leaving some protein in gives more units at lower purity.' : ''}`;
+      if (st.ratioOf === 'acid') return `Acid is left over (${mL(b.acid)}): add <b>${name} equal to it</b> to cancel it out${bottle}.`;
+      return `Pour in ${mL(got > 0 ? got : st.amount)} of ${name}${bottle}.`;
+    }
+    case 'heat': {
+      const m = MUSH.find(id => has(b, id));
+      const until = m && !has(a, m) ? `until the ${liq(m)} reads 0 (about ${st.seconds} s)` : `for ${st.seconds} s`;
+      return `Heating Plate on high, target ${st.target} °C, ${until}.`;
+    }
+    case 'wait': { // name what the wait is for: the first of these that goes down
+      const id = ['protein', 'fat', 'acid', 'base', 'stabilizing_agent'].find(x => has(b, x) && (a[x] || 0) < b[x] * 0.95);
+      return id ? `Wait until the ${liq(id)} reads ${mL(a[id] || 0)} (about ${st.seconds} s).` : `Wait about ${st.seconds} s.`;
+    }
+    case 'filter': {
+      const gone = Object.keys(b).filter(id => b[id] > 0 && (a[id] || 0) < b[id] / 2);
+      return `Pour through a Water Filter (size 22) into a clean container${gone.length ? `. It holds back the ${gone.map(liq).join(', ')}` : ''}.`;
+    }
+    case 'dry': return `Evaporator until dry: ${st.nights} night${st.nights === 1 ? '' : 's'}.`;
   }
 }
 
@@ -186,6 +241,12 @@ function limitHtml(st) {
   return lim ? `<div class="bad"><b>Max ${lim.temp} °C. Do not go hotter: ${esc(lim.why)}.</b>${esc(boil)}</div>` : (boil ? `<div class="muted">${esc(boil)}</div>` : '');
 }
 
+// Leave out pours that come to nothing (no protein or acid left) and the wait after them.
+const shownSteps = steps => steps.filter((st, i) => {
+  const empty = x => x?.op === 'pour' && x.ratioOf && x.amount < 100;
+  return !empty(st) && !(st.op === 'wait' && empty(steps[i - 1])) && !(st.op === 'dry' && !st.nights);
+});
+
 function recipeHtml(product, goal, e) {
   const r = e.r, P = CHEM.PRODUCTS[product];
   const inputs = TEMPLATES[product].unit === 'bottle' ? `${S.batch} precursor bottle${S.batch === 1 ? '' : 's'}` : `${S.batch} ${CHEM.ITEMS[TEMPLATES[product].input].name}`;
@@ -194,7 +255,7 @@ function recipeHtml(product, goal, e) {
     <div>${r.units} × ${P.name} from ${inputs}${r.wet ? ' <span class="bad">(still wet)</span>' : ''}</div>
     <div class="muted">${r.nights} night(s) drying, ${r.seconds} s of work</div>
     ${goal !== 'purity' && r.purity < S.minGrade ? `<div class="bad">Cannot reach ${CHEM.grade(S.minGrade)}: this is the purest recipe instead.</div>` : ''}
-    <ol>${e.steps.map(st => `<li>${esc(stepText(st))}${limitHtml(st)}</li>`).join('')}<li>Chem Finisher: ${P.name}</li></ol>
+    <ol>${shownSteps(e.steps).map(st => `<li>${stepHtml(st)}${limitHtml(st)}</li>`).join('')}<li>Chem Finisher: ${P.name}</li></ol>
     <details><summary class="muted">Final mix</summary><div class="muted">${Object.entries(r.container.l).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k.replace(/_/g, ' ')} ${mL(v)}`).join(', ')}</div></details>
   </div>`;
 }
@@ -213,7 +274,7 @@ async function solveAll() {
   for (const id of Object.keys(CHEM.PRODUCTS)) {
     $('#status').textContent = `Working out ${CHEM.PRODUCTS[id].name}…`;
     await new Promise(r => setTimeout(r, 10)); // let the status show
-    results[id] = Object.fromEntries(Object.keys(GOALS).map(g => [g, optimise(id, g)]));
+    results[id] = optimiseAll(id);
   }
   $('#status').textContent = 'Done.';
   render(results);
