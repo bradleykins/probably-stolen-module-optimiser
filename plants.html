@@ -41,7 +41,7 @@ nav a { color: var(--accent); }
     <h3>DNA Manipulator modules and seeds you own</h3>
     <div class="row" id="owned"></div>
     <div class="row"><button id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden><span id="importStatus" class="muted"></span></div>
-    <p class="hint">Precision Extraction picks the exact trait to extract. Without it, extraction picks a random trait (a Positive or Negative Trait Filter narrows it to good or bad traits). Genetic Stabilizer keeps the seed alive when you extract, which is the only way to remove a trait.</p>
+    <p class="hint">Precision Extraction picks the exact trait to extract, once you use it on a disk of that trait to copy it (so the first disk of each trait comes by luck). Without it, extraction picks a random trait (a Positive or Negative Trait Filter narrows it to good or bad traits). Genetic Stabilizer keeps the seed alive when you extract, which is the only way to remove a trait.</p>
     <h3>Traits you can get</h3>
     <p class="hint">Ticked by default: every trait some plant has naturally, so you can extract it onto a disk. Simple/Complex Genome are locked in the game and cannot be moved.</p>
     <div class="traits" id="traits"></div>
@@ -206,12 +206,20 @@ const isNegative = t => t.c < 0 || (t.offset || 0) > 0; // PlantTrait.IsNegative
 
 // Chance an extraction from a seed with these ranks copies trait t, with the modules you own.
 // Without Precision the game picks at random from the seed's unlocked traits; a filter that matches t narrows that.
+// Precision Extraction starts blank: you use it on a written disk to copy that disk's trait, and it then
+// extracts only that trait (one trait at a time). So the first disk of a trait still comes by luck.
 function pickOdds(ranks, t) {
-  if (S.owned.precision) return { chance: 1, how: `set Precision Extraction to ${t.name}`, pool: [t] };
+  if (S.owned.precision && (S.precisionSet || []).includes(t.id)) return { chance: 1, how: `Precision Extraction, already set to ${t.name}`, pool: [t] };
+  if (S.owned.precision && (S.disks || []).includes(t.id)) return { chance: 1, how: `Precision Extraction: first use it on your ${t.name} disk to copy that trait`, pool: [t] };
   let pool = G.traits.filter(x => (ranks[x.id] || 0) > 0 && !x.locked), how = 'no filter';
   if (isNegative(t) && S.owned.negFilter) { pool = pool.filter(isNegative); how = 'Negative Trait Filter only'; }
   else if (!isNegative(t) && S.owned.posFilter) { pool = pool.filter(x => !isNegative(x)); how = 'Positive Trait Filter only'; }
-  return pool.some(x => x.id === t.id) ? { chance: 1 / pool.length, how, pool } : { chance: 0, how, pool };
+  // A module set to another trait would only extract that trait, so it must come out for a lucky extraction.
+  const set = (S.precisionSet || []).map(id => G.trait(id)?.name).filter(Boolean);
+  if (S.owned.precision && set.length) how += `; take out Precision Extraction (it is set to ${set.join(', ')})`;
+  const o = pool.some(x => x.id === t.id) ? { chance: 1 / pool.length, how, pool } : { chance: 0, how, pool };
+  o.luckFirst = S.owned.precision; // after the first lucky disk, Precision makes the rest certain
+  return o;
 }
 
 // Your seeds (from the save). The save uses its own ids; map them to this planner's.
@@ -266,6 +274,7 @@ function recipeHtml(plant, list) {
     disks += 1;
     steps.push(`Make a <b>${esc(t.name)}</b> disk: put a <b>${esc(d.p.name)}</b> seed${d.have ? ` (you have ${d.have})` : ''} and a blank DNA disk in the DNA Manipulator (${esc(d.odds.how)}) and Extract.
       ${d.chance}% success.${luckText(d.odds)} Expect about ${Math.round(10 / d.per) / 10} tries per good disk.
+      ${d.odds.luckFirst && n > d.uses ? `Once you have one ${esc(t.name)} disk, use Precision Extraction on it to copy ${esc(t.name)}; then the next extractions always pick it.` : ''}
       Each ${esc(d.p.name)} seed gives ${d.uses} use${d.uses === 1 ? '' : 's'}; you need ${n}, so use ${seeds} donor seed${seeds === 1 ? '' : 's'} (extract onto the same disk to add uses).
       ${S.owned.stabilizer ? 'With the Genetic Stabilizer the donor seed survives (minus 1 rank of that trait).' : 'The donor seed is used up each try.'}`);
   }
@@ -282,14 +291,15 @@ function recipeHtml(plant, list) {
     if (!S.owned.stabilizer) { steps.push(`&nbsp;&nbsp;<span class="bad">Remove 1 <b>${esc(e.t.name)}</b>: needs a Genetic Stabilizer, which you don't have. Without it, extracting destroys your seed. Find one first, or pick a route that removes nothing.</span>`); continue; }
     const o = pickOdds(e.before, e.t);
     steps.push(`&nbsp;&nbsp;Remove 1 <b>${esc(e.t.name)}</b>: with the Genetic Stabilizer installed (${esc(o.how)}), Extract from your seed onto a blank disk. The seed survives and loses 1 rank (${e.chance}% success).
-      ${o.chance < 1 ? `<span class="warn">Luck: ${asPct(o.chance)} it removes ${esc(e.t.name)}; otherwise it removes 1 rank of a different trait (${o.pool.filter(x => x.id !== e.t.id).map(x => esc(x.name)).join(', ')}), which you would have to add back.</span>` : ''}`);
+      ${o.chance < 1 && o.luckFirst ? `Tip: if you already have a ${esc(e.t.name)} disk, use Precision Extraction on it first and this removal is certain. ` : ''}${o.chance < 1 ? `<span class="warn">Luck: ${asPct(o.chance)} it removes ${esc(e.t.name)}; otherwise it removes 1 rank of a different trait (${o.pool.filter(x => x.id !== e.t.id).map(x => esc(x.name)).join(', ')}), which you would have to add back.</span>` : ''}`);
   }
   steps.push('A failed apply keeps the disk use but still adds heat, so retry on the next generation if the chance gets low. A failed extraction writes nothing to the disk.');
   const need = [`${disks + (removes.length ? 1 : 0)} blank DNA disk${disks + (removes.length ? 1 : 0) === 1 ? '' : 's'} (more if extractions fail)`];
   if (removes.length) need.push('Genetic Stabilizer module');
   const missing = Object.keys(MODULES).filter(k => !S.owned[k] && (k === 'precision' || (k === 'stabilizer' && removes.length)));
   const advice = !S.owned.precision
-    ? `<p class="warn">You don't have a Precision Extraction module. Worth finding one: set to a trait, every extraction copies exactly that trait. Until then these steps work by luck, shown on each step.</p>` : '';
+    ? `<p class="warn">You don't have a Precision Extraction module. Worth finding one: use it on a disk of a trait to copy that trait, and every extraction after that picks it. You still need the first disk of each trait by luck. Until then these steps work by luck, shown on each step.</p>`
+    : `<p class="hint">Precision Extraction copies its trait from a written disk (use the module on the disk) and then extracts only that trait. It holds one trait at a time, so copy a new disk before switching trait. A trait you have no disk of yet is extracted by luck first.</p>`;
   return `<h3>How to do it</h3>${advice}<p class="hint">You need: ${need.join(', ')}.${missing.length ? ` Missing: ${missing.map(k => MODULES[k]).join(', ')}.` : ''}</p>
     <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>`;
 }
@@ -426,13 +436,15 @@ document.addEventListener('change', e => {
 async function importOwned(file) {
   if (!file) return;
   try {
-    const { modules, seeds } = readSave(await file.text(), GAME);
+    const { modules, seeds, disks = [], precision = [] } = readSave(await file.text(), GAME);
+    const known = ids => [...new Set(ids.map(saveTrait))].filter(id => G.trait(id));
+    S.disks = known(disks); S.precisionSet = known(precision);
     S.seeds = seeds.filter(x => SAVE_PLANT[x.plant]).map(x => ({ plant: SAVE_PLANT[x.plant], heat: x.heat, count: x.count,
       ranks: Object.fromEntries(Object.entries(x.ranks).map(([id, r]) => [saveTrait(id), r]).filter(([id]) => G.trait(id))) }));
     for (const p of G.plants) S.plants[p.id].start = '';
     const has = name => modules.some(m => m.count > 0 && m.name.startsWith(name));
     for (const [k, name] of Object.entries(MODULES)) S.owned[k] = has(name);
-    $('#importStatus').textContent = `Read ${file.name}: ` + Object.entries(MODULES).map(([k, n]) => `${n} ${S.owned[k] ? 'yes' : 'no'}`).join(', ') + `; ${S.seeds.reduce((a, x) => a + x.count, 0)} seeds.`;
+    $('#importStatus').textContent = `Read ${file.name}: ` + Object.entries(MODULES).map(([k, n]) => `${n} ${S.owned[k] ? 'yes' : 'no'}`).join(', ') + `; ${S.seeds.reduce((a, x) => a + x.count, 0)} seeds; disks: ${S.disks.map(id => G.trait(id).name).join(', ') || 'none'}${S.precisionSet.length ? `; Precision Extraction set to ${S.precisionSet.map(id => G.trait(id).name).join(', ')}` : ''}.`;
     render();
   } catch (err) { alert('Could not read that save: ' + err.message); }
 }

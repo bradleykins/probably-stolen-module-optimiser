@@ -120,7 +120,11 @@ function readSave(text, GAME) {
     if (!seedGroups.has(key)) seedGroups.set(key, { ...s, count: 0 });
     seedGroups.get(key).count += o.unitCount || 1;
   }
-  return { modules, machines, seeds: [...seedGroups.values()] };
+  // DNA: traits on your written disks, and the trait each Precision Extraction module copied from a disk.
+  const owned = items.filter(o => o._keys.includes('IS_OWNED_TAG'));
+  const disks = owned.map(o => saveStr(o, 'DNA_DISK_TRAIT_STRING')).filter(Boolean);
+  const precision = owned.map(o => saveStr(o, 'DNA_PRECISION_TRAIT_STRING')).filter(Boolean);
+  return { modules, machines, seeds: [...seedGroups.values()], disks, precision };
 }
 
 // Modules only, for the single-machine page.
