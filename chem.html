@@ -150,23 +150,36 @@ const TEMPLATES = {
 // Three goals: purity first; most units per input item above the chosen grade; fewest nights, then seconds, above it.
 // The grade threshold a purity reaches (99, 90, 80, ...), so purity within one grade does not count.
 const gradeFloor = purity => Math.max(0, ...CHEM.GRADES.map(([p]) => p).filter(p => purity >= p));
+// Last tie-break: pour less (e.g. alcohol beyond 5× the mush changes nothing), then a touch more purity.
+// Litres poured × 10 stays under one drying night (1e3), so it only decides between otherwise equal recipes.
+let topGrade = 101; // the best grade this product can reach; set per product in optimiseAll
+const thrift = r => -r.poured / 1e6 * 10 + r.purity / 1e4;
 const GOALS = {
   // Ties (purity to 0.1%, same units) go to fewer drying nights, so it does not pour extra alcohol for nothing.
   // Main recipe: the best grade reachable, then the most units at that grade, then fewer drying nights.
-  best: { name: 'Most product at the highest grade', score: r => gradeFloor(r.purity) * 1e9 + r.units * 1e3 - r.nights + r.purity / 1e3 },
-  yield: { name: 'More product, lower grade', score: r => (r.purity >= S.minGrade ? 1e9 + r.units * 1e3 - r.nights : 0) + r.purity / 100 },
-  fast: { name: 'Fastest', score: r => (r.purity >= S.minGrade ? 1e9 - (r.nights * 86400 + r.seconds) : 0) + r.purity / 100 },
+  // Below a goal's grade, purity is what counts, so the search climbs towards the grade first.
+  best: { name: 'Most product at the highest grade', score: r => (r.purity >= topGrade ? 1e12 + r.units * 1e6 - r.nights * 1e3 : r.purity * 1e6) + thrift(r) },
+  yield: { name: 'More product, lower grade', score: r => (r.purity >= S.minGrade ? 1e12 + r.units * 1e6 - r.nights * 1e3 : r.purity * 1e6) + thrift(r) },
+  fast: { name: 'Fastest', score: r => (r.purity >= S.minGrade ? 1e12 - (r.nights * 86400 + r.seconds) * 1e3 : r.purity * 1e6) + thrift(r) },
 };
 
 function evaluate(product, p) {
   const steps = TEMPLATES[product].steps(p);
-  return { p, steps, r: CHEM.run(steps, product, S.finisher) };
+  const r = CHEM.run(steps, product, S.finisher);
+  r.poured = steps.reduce((a, st) => a + (st.op === 'pour' ? st.amount : 0), 0); // µL of bottles poured
+  return { p, steps, r };
 }
 
 // Random search, then shrink around the best: a few hundred simulations per goal.
 // Three restarts, and each goal also tries the other goals' winners, so one unlucky search does not stick.
 function optimiseAll(product) {
-  const runs = Object.keys(GOALS).flatMap(g => [7, 99, 4242].map(seed => optimise(product, g, seed)));
+  const seeds = [7, 99, 4242];
+  // Stage 1: with the grade out of reach, "best" is a pure purity search: it finds the best grade possible.
+  topGrade = 101;
+  const purest = seeds.map(seed => optimise(product, 'best', seed));
+  topGrade = gradeFloor(Math.max(...purest.map(e => e.r.purity)));
+  // Stage 2: every goal, with "best" now going for the most units at that grade.
+  const runs = [...purest, ...Object.keys(GOALS).flatMap(g => seeds.map(seed => optimise(product, g, seed)))];
   return Object.fromEntries(Object.keys(GOALS).map(g => {
     let best = null;
     for (const e of runs) { const s = GOALS[g].score(e.r); if (!best || s > best.s) best = { ...e, s }; }
