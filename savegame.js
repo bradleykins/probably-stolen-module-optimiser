@@ -108,7 +108,19 @@ function readSave(text, GAME) {
     g.where[at] = (g.where[at] || 0) + 1;
   }
   const modules = [...groups.values()].sort((a, b) => !!a.node - !!b.node || a.name.localeCompare(b.name));
-  return { modules, machines };
+
+  // Owned seeds, grouped by plant + trait ranks + genetic heat. Trait ids as the game stores them (PLANT_TRAIT_<ID>).
+  const seedGroups = new Map();
+  for (const o of items) {
+    if (!o._keys.includes('SEED_ITEM_TAG') || !o._keys.includes('IS_OWNED_TAG')) continue;
+    const ranks = {};
+    for (const k of o._keys) if (k.startsWith('PLANT_TRAIT_') && saveInt(o, k) > 0) ranks[k.slice(12).toLowerCase()] = saveInt(o, k);
+    const s = { plant: saveStr(o, 'PLANT_ID_STRING') || o.identifier, ranks, heat: saveInt(o, 'GENETIC_HEAT_INT') };
+    const key = JSON.stringify(s);
+    if (!seedGroups.has(key)) seedGroups.set(key, { ...s, count: 0 });
+    seedGroups.get(key).count += o.unitCount || 1;
+  }
+  return { modules, machines, seeds: [...seedGroups.values()] };
 }
 
 // Modules only, for the single-machine page.

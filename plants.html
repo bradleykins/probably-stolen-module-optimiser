@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plant DNA Planner</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.pcard { border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-width: 0; }
+#plants { display: grid; gap: 10px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); }
+.pcard h4 { margin: 0; font-size: 15px; flex: 1; }
+.pcard.none { opacity: .6; }
+details.pcard > summary { list-style: none; gap: 10px; }
+details.pcard > summary::before { content: '▸'; color: var(--muted); }
+details.pcard[open] > summary::before { content: '▾'; }
+table.t td, table.t th { padding: 2px 10px 2px 0; text-align: left; font-size: 13px; }
+table.t th { color: var(--muted); font-weight: 600; }
+.up { color: var(--accent); } .down { color: var(--bad); }
+.traits label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; margin: 0 10px 4px 0; }
+nav a { color: var(--accent); }
+@media (min-width: 760px) { main { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Plant DNA Planner</h1>
+  <p>For each plant, the best traits to add or remove with the DNA Manipulator for the goal you pick, and the order to do the edits.
+    <nav style="display:inline"><a href="plan.html">All machines planner →</a> · <a href="chem.html">Chemistry recipes →</a></nav></p>
+</header>
+<main>
+  <section>
+    <h2>Settings</h2>
+    <div class="row stack">
+      <label>Hydroponic growth per night<input type="number" id="speed" min="1"></label>
+      <label>Hydroponic Quality total<input type="number" id="hydroQ"></label>
+      <label>DNA Manipulator Quality total<input type="number" id="dnaQ"></label>
+      <label>Lowest success chance per edit (%)<input type="number" id="minSuccess" min="5" max="100"></label>
+      <label>Highest rank to consider<input type="number" id="maxRank" min="1" max="15"></label>
+    </div>
+    <p class="hint">Growth per night is 8 at base (Hydroponic System: Performance/2 speeds it up). Hydroponic Quality/2 is % more harvest. DNA Quality/2 adds to every edit's success chance.</p>
+    <h3>DNA Manipulator modules and seeds you own</h3>
+    <div class="row" id="owned"></div>
+    <div class="row"><button id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden><span id="importStatus" class="muted"></span></div>
+    <p class="hint">Precision Extraction picks the exact trait to extract. Without it, extraction picks a random trait (a Positive or Negative Trait Filter narrows it to good or bad traits). Genetic Stabilizer keeps the seed alive when you extract, which is the only way to remove a trait.</p>
+    <h3>Traits you can get</h3>
+    <p class="hint">Ticked by default: every trait some plant has naturally, so you can extract it onto a disk. Simple/Complex Genome are locked in the game and cannot be moved.</p>
+    <div class="traits" id="traits"></div>
+  </section>
+  <section>
+    <h2>Plants</h2>
+    <div id="plants"></div>
+  </section>
+</main>
+<script src="genetics-data.js"></script>
+<script src="game-data.js"></script>
+<script src="solver.js"></script>
+<script src="savegame.js"></script>
+<script src="ui.js"></script>
+<script>
+const KEY = 'ps-plants-v1';
+const $ = s => document.querySelector(s);
+const G = GENETICS;
+const GOALS = { produce: 'Most produce per night', active: 'Most active ingredient per night', money: 'Most sell value per night', seeds: 'Most seeds per harvest' };
+const innateSomewhere = id => G.plants.some(p => (p.innate[id] || 0) > 0);
+const DEFAULT = {
+  speed: 8, hydroQ: 0, dnaQ: 0, minSuccess: 50, maxRank: 8,
+  owned: { precision: false, stabilizer: false, posFilter: false, negFilter: false },
+  seeds: [], // your seeds from the save: {plant, ranks, heat, count}
+  available: Object.fromEntries(G.traits.map(t => [t.id, !t.locked && innateSomewhere(t.id)])),
+  plants: Object.fromEntries(G.plants.map(p => [p.id, { goal: p.actives ? 'active' : 'produce', value: p.value }])),
+};
+let S;
+try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const round = v => Math.round(v * 100) / 100;
+
+// What a seed with these ranks gives, per harvest and per night (long-term, so perennials use their regrow time).
+function metrics(plant, ranks) {
+  const perennial = (ranks.perennial || 0) > 0;
+  const base = perennial ? (plant.refruit || Math.max(1, Math.round(plant.progress * 0.5))) : plant.progress;
+  const work = Math.max(1, Math.round(base / G.mult(ranks, 'GROWTH_SPEED')));
+  const nights = Math.ceil(work / Math.max(1, S.speed));
+  const q0 = Math.round(plant.harvest * G.mult(ranks, 'HARVEST_QUANTITY'));
+  const qty = Math.round(q0 + q0 * Math.trunc(S.hydroQ / 2) / 100);
+  let activeMl = 0;
+  const potency = G.mult(ranks, 'ACTIVES');
+  const liquids = { ...(plant.actives || {}) };
+  for (const t of G.traits) if (t.produces && ranks[t.id] > 0) liquids[t.produces[0]] = (liquids[t.produces[0]] || 0) + t.produces[1] * G.rankScale(ranks[t.id]);
+  const w = plant.target?.weights || {};
+  for (const [id, ml] of Object.entries(liquids)) activeMl += ml * potency * (w[id] || 0);
+  const value = (S.plants[plant.id].value || 0) * G.mult(ranks, 'SELL_PRICE');
+  const seeds = plant.returnsSeeds ? G.mult(ranks, 'SEED_YIELD') : 0;
+  return { work, nights, qty, activeMl, perNight: qty / nights, activePerNight: qty * activeMl / nights, moneyPerNight: qty * value / nights, seeds };
+}
+const score = (goal, m) => ({ produce: m.perNight, active: m.activePerNight, money: m.moneyPerNight, seeds: m.seeds })[goal];
+
+// Groups the goal cares about: a level > 0 means the good trait at that rank, < 0 the bad one, 0 neither.
+const PAIRS = { growth: ['fast_grower', 'slow_grower'], yield: ['bountiful', 'sparse'], potency: ['potent', 'weak'], taste: ['delicious', 'unappetizing'], seeds: ['fertile', 'infertile'] };
+const RELEVANT = { produce: ['growth', 'yield', 'perennial'], active: ['growth', 'yield', 'perennial', 'potency', 'production'], money: ['growth', 'yield', 'perennial', 'taste'], seeds: ['seeds', 'perennial', 'growth'] };
+
+function allowed(plant, t) {
+  if (t.needsSeeds && !plant.returnsSeeds) return false;
+  if (t.needsDurable && !plant.durable) return false;
+  if (t.needsActive && !plant.actives) return false;
+  return true;
+}
+
+// Every edit needed to go from innate ranks to the target, ordered so complexity rises as late as possible.
+function edits(plant, target) {
+  const start = startOf(plant);
+  const list = [];
+  for (const t of G.traits) {
+    const from = start[t.id] || 0, to = target[t.id] || 0;
+    for (let k = from; k > to; k--) list.push({ t, add: false, cost: Math.abs(t.c) });
+    for (let k = from; k < to; k++) list.push({ t, add: true, cost: t.c });
+  }
+  list.sort((a, b) => a.cost - b.cost);
+  // Walk the edits: complexity after each edit, plus heat from earlier edits on the same seed.
+  const ranks = { ...start };
+  let heat = startHeat(plant), gen = 1;
+  for (const e of list) {
+    e.before = { ...ranks };
+    ranks[e.t.id] = (ranks[e.t.id] || 0) + (e.add ? 1 : -1);
+    const c = G.complexity(plant, ranks);
+    let chance = G.success(c + heat, S.dnaQ);
+    if (heat > 0 && chance < S.minSuccess) { gen++; heat = 0; chance = G.success(c, S.dnaQ); } // harvest, edit the new seed
+    Object.assign(e, { complexity: c, chance, gen });
+    heat += 2 + Math.abs(e.t.c);
+  }
+  return list;
+}
+
+function optimise(plant, goal = S.plants[plant.id].goal) {
+  const start = startOf(plant);
+  const groups = RELEVANT[goal];
+  const can = id => S.available[id] && allowed(plant, G.trait(id));
+  const levels = [];
+  for (const g of groups) {
+    if (PAIRS[g]) {
+      const [good, bad] = PAIRS[g].map(G.trait);
+      if (!allowed(plant, good) && !allowed(plant, bad)) continue;
+      const opts = new Set([0]);
+      for (let r = 1; r <= S.maxRank; r++) if (can(good.id)) opts.add(r);
+      const innateBad = start[bad.id] || 0;
+      for (let r = 1; r <= innateBad; r++) opts.add(-r); // keep some of the bad trait already there
+      levels.push({ apply: (rk, v) => { rk[good.id] = Math.max(0, v); rk[bad.id] = Math.max(0, -v); }, opts: [...opts], start: (start[good.id] || 0) - innateBad });
+    } else if (g === 'perennial' && (can('perennial') || start.perennial)) {
+      levels.push({ apply: (rk, v) => { rk.perennial = v; }, opts: [0, 1], start: start.perennial || 0 });
+    } else if (g === 'production' && plant.actives) {
+      for (const t of G.traits.filter(t => t.produces && plant.target?.weights[t.produces[0]] && (can(t.id) || start[t.id]))) {
+        const opts = [];
+        for (let r = 0; r <= S.maxRank; r++) if (r === (start[t.id] || 0) || can(t.id)) opts.push(r);
+        levels.push({ apply: (rk, v) => { rk[t.id] = v; }, opts, start: start[t.id] || 0 });
+      }
+    }
+  }
+  const capC = (95 + Math.trunc(S.dnaQ / 2) - S.minSuccess) / 5; // highest complexity an edit can reach
+  const base = score(goal, metrics(plant, start));
+  const byOps = new Map(); // edits count -> best plan with that many edits
+  const ranks = { ...start };
+  (function walk(i) {
+    if (i === levels.length) {
+      const c = G.complexity(plant, ranks);
+      if (c > capC) return;
+      // Removing a rank needs a Genetic Stabilizer (extracting without one destroys the seed).
+      if (!S.owned.stabilizer && Object.keys(start).some(id => (ranks[id] || 0) < start[id])) return;
+      const m = metrics(plant, ranks), s = score(goal, m);
+      if (s <= base + 1e-9) return;
+      const ops = Object.keys({ ...start, ...ranks }).reduce((n, id) => n + Math.abs((ranks[id] || 0) - (start[id] || 0)), 0);
+      const b = byOps.get(ops);
+      if (!b || s > b.s + 1e-9 || (Math.abs(s - b.s) < 1e-9 && c < b.c)) byOps.set(ops, { s, ops, c, ranks: { ...ranks }, m });
+      return;
+    }
+    const L = levels[i];
+    for (const v of L.opts) { L.apply(ranks, v); walk(i + 1); }
+    L.apply(ranks, L.start);
+  })(0);
+  // Routes: only keep a plan if no other plan gives at least as much output for fewer expected tries.
+  const plans = [...byOps.values()].map(p => {
+    const list = edits(plant, p.ranks);
+    return { ...p, list, tries: list.reduce((a, e) => a + 100 / e.chance, 0), worst: Math.min(...list.map(e => e.chance)), gens: list.length ? list[list.length - 1].gen : 0 };
+  });
+  const beats = (q, p) => q.s >= p.s - 1e-9 && q.tries <= p.tries + 1e-9 && (q.s > p.s + 1e-9 || q.tries < p.tries - 1e-9);
+  const routes = plans.filter(p => !plans.some(q => beats(q, p)));
+  routes.sort((a, b) => b.s - a.s);
+  return routes.slice(0, 6);
+}
+
+// What each goal scores, in words. The tool cannot pick the goal for you: items, mL and money are different
+// things, so you choose what this plant is for and the routes maximise that.
+const GOAL_HELP = {
+  produce: 'Scores <b>items per night</b> = items per harvest ÷ nights per harvest. Pick this when you use or sell the produce itself: more harvest (Bountiful) and faster growth (Fast Grower) count, ingredient strength does not.',
+  active: 'Scores <b>target ingredient mL per night</b> = items per harvest × mL per item ÷ nights per harvest. Pick this when the plant feeds your chemistry: more harvest, faster growth and stronger items (Potent, removing Weak) all count.',
+  money: 'Scores <b>sell value per night</b> = items per harvest × sell value (× Delicious bonus) ÷ nights per harvest. Pick this when you sell the produce. Set the sell value if it shows "?".',
+  seeds: 'Scores <b>seeds back per harvest</b> (Fertile raises it, Perennial halves it). Pick this to grow your seed stock.',
+};
+
+// How to actually do a route in the DNA Manipulator (MachineDnaManipulator):
+// - Extract: seed + blank DNA disk. Copies one of the seed's traits onto the disk; a Precision Extraction
+//   module set to a trait picks that trait. Disk uses = the donor's natural rank in it (1 if not natural).
+//   Without a Genetic Stabilizer module the seed is destroyed; with one it survives and loses 1 rank of that trait.
+// - Apply: your seed + a written disk. Adds 1 rank and spends 1 use.
+// So adding a trait = extract it from a donor plant, then apply; removing = extract it from your own seed with a Stabilizer.
+const MODULES = { precision: 'Precision Extraction', stabilizer: 'Genetic Stabilizer', posFilter: 'Positive Trait Filter', negFilter: 'Negative Trait Filter' };
+const isNegative = t => t.c < 0 || (t.offset || 0) > 0; // PlantTrait.IsNegative
+
+// Chance an extraction from a seed with these ranks copies trait t, with the modules you own.
+// Without Precision the game picks at random from the seed's unlocked traits; a filter that matches t narrows that.
+function pickOdds(ranks, t) {
+  if (S.owned.precision) return { chance: 1, how: `set Precision Extraction to ${t.name}`, pool: [t] };
+  let pool = G.traits.filter(x => (ranks[x.id] || 0) > 0 && !x.locked), how = 'no filter';
+  if (isNegative(t) && S.owned.negFilter) { pool = pool.filter(isNegative); how = 'Negative Trait Filter only'; }
+  else if (!isNegative(t) && S.owned.posFilter) { pool = pool.filter(x => !isNegative(x)); how = 'Positive Trait Filter only'; }
+  return pool.some(x => x.id === t.id) ? { chance: 1 / pool.length, how, pool } : { chance: 0, how, pool };
+}
+
+// Your seeds (from the save). The save uses its own ids; map them to this planner's.
+const SAVE_PLANT = { nutrifruit_seed: 'nutrifruit', kotton_seed: 'kotton', dream_cap_seed: 'dream_cap', coffee_bean: 'coffee', fillerweed_seed: 'fillerweed', hydroreed_seed: 'hydroreed', bloomberry_seed: 'bloomberry' };
+const saveTrait = id => (id.startsWith('production_') ? 'prod_' + id.slice(11) : id);
+const mySeeds = plant => (S.seeds || []).filter(x => x.plant === plant.id);
+const chosenSeed = plant => { const i = S.plants[plant.id].start; return i === undefined || i === '' ? null : mySeeds(plant)[+i] || null; };
+const startOf = plant => chosenSeed(plant)?.ranks || plant.innate;
+const startHeat = plant => chosenSeed(plant)?.heat || 0;
+const seedLabel = (plant, x) => {
+  const diff = G.traits.filter(t => (x.ranks[t.id] || 0) !== (plant.innate[t.id] || 0)).map(t => `${t.name} ${plant.innate[t.id] || 0}→${x.ranks[t.id] || 0}`);
+  return `Your seed ×${x.count}${diff.length ? ' (edited: ' + diff.join(', ') + ')' : ' (natural)'}${x.heat ? ', heat ' + x.heat : ''}`;
+};
+function startPicker(plant) {
+  if (!(S.seeds || []).length) return '';
+  const mine = mySeeds(plant);
+  if (!mine.length) return `<span class="warn">You have no ${esc(plant.name)} seeds.</span>`;
+  return `Start from <select data-p="${plant.id}" data-f="start"><option value="">Natural seed</option>${mine.map((x, i) => `<option value="${i}" ${String(S.plants[plant.id].start) === String(i) ? 'selected' : ''}>${esc(seedLabel(plant, x))}</option>`).join('')}</select>`;
+}
+
+// Donor plant for a trait: the best odds of a successful extraction of that exact trait.
+function bestDonor(t) {
+  // With your seeds imported, only seeds you own can donate; otherwise any plant that has the trait naturally.
+  const pool = (S.seeds || []).length
+    ? S.seeds.filter(x => (x.ranks[t.id] || 0) > 0).map(x => ({ p: G.plants.find(p => p.id === x.plant), ranks: x.ranks, heat: x.heat, have: x.count }))
+    : G.plants.filter(p => (p.innate[t.id] || 0) > 0).map(p => ({ p, ranks: p.innate, heat: 0 }));
+  return pool.filter(d => d.p).map(d => {
+    const odds = pickOdds(d.ranks, t), chance = G.success(G.complexity(d.p, d.ranks) + d.heat, S.dnaQ);
+    const uses = (d.p.innate[t.id] || 0) > 0 ? d.ranks[t.id] : 1; // ExtractionUses: natural traits give one use per rank
+    return { ...d, uses, chance, odds, per: (chance / 100) * odds.chance };
+  }).filter(d => d.per > 0).sort((a, b) => b.per - a.per || b.uses - a.uses)[0] || null;
+}
+
+const asPct = v => `${Math.round(v * 100)}%`; // (game-data.js already defines pct)
+const luckText = o => (o.chance < 1 ? ` Luck: ${asPct(o.chance)} to pick it (1 of ${o.pool.length}: ${o.pool.map(x => esc(x.name)).join(', ')}); otherwise you get a different trait's disk.` : '');
+
+function recipeHtml(plant, list) {
+  if (!list.length) return '';
+  const adds = {}, steps = [];
+  for (const e of list) if (e.add) adds[e.t.id] = (adds[e.t.id] || 0) + 1;
+  const removes = list.filter(e => !e.add);
+  // 1. Disks to collect first, from donor seeds.
+  let disks = 0;
+  for (const [id, n] of Object.entries(adds)) {
+    const t = G.trait(id), d = bestDonor(t);
+    if (!d) {
+      const natural = G.plants.filter(p => (p.innate[t.id] || 0) > 0).map(p => p.name);
+      steps.push(`<span class="warn">Get a <b>${esc(t.name)}</b> disk with ${n} use${n === 1 ? '' : 's'}: ${natural.length ? `you have no seed with it. Get a ${natural.map(esc).join(' or ')} seed (they have it naturally).` : 'no plant has it naturally, so you need a disk from elsewhere.'}</span>`);
+      continue;
+    }
+    const seeds = Math.ceil(n / d.uses);
+    disks += 1;
+    steps.push(`Make a <b>${esc(t.name)}</b> disk: put a <b>${esc(d.p.name)}</b> seed${d.have ? ` (you have ${d.have})` : ''} and a blank DNA disk in the DNA Manipulator (${esc(d.odds.how)}) and Extract.
+      ${d.chance}% success.${luckText(d.odds)} Expect about ${Math.round(10 / d.per) / 10} tries per good disk.
+      Each ${esc(d.p.name)} seed gives ${d.uses} use${d.uses === 1 ? '' : 's'}; you need ${n}, so use ${seeds} donor seed${seeds === 1 ? '' : 's'} (extract onto the same disk to add uses).
+      ${S.owned.stabilizer ? 'With the Genetic Stabilizer the donor seed survives (minus 1 rank of that trait).' : 'The donor seed is used up each try.'}`);
+  }
+  // 2. The edits on your own seed, in order.
+  let gen = 1;
+  if (list[0].gen > 1) {
+    steps.push(`Your <b>${esc(plant.name)}</b> seed already has ${startHeat(plant)} heat from earlier edits: plant it, grow and harvest it first, and edit one of its new seeds (same traits, no heat).`);
+    gen = list[0].gen;
+  }
+  steps.push(`Put your <b>${esc(plant.name)}</b> seed in the DNA Manipulator.${gen > 1 ? '' : ' Generation 1:'}`);
+  for (const e of list) {
+    if (e.gen !== gen) { gen = e.gen; steps.push(`Plant the seed, grow and harvest it, and take one of the new seeds (same traits, no heat). Generation ${gen}:`); }
+    if (e.add) { steps.push(`&nbsp;&nbsp;Apply the <b>${esc(e.t.name)}</b> disk: +1 ${esc(e.t.name)} (${e.chance}% success).`); continue; }
+    if (!S.owned.stabilizer) { steps.push(`&nbsp;&nbsp;<span class="bad">Remove 1 <b>${esc(e.t.name)}</b>: needs a Genetic Stabilizer, which you don't have. Without it, extracting destroys your seed. Find one first, or pick a route that removes nothing.</span>`); continue; }
+    const o = pickOdds(e.before, e.t);
+    steps.push(`&nbsp;&nbsp;Remove 1 <b>${esc(e.t.name)}</b>: with the Genetic Stabilizer installed (${esc(o.how)}), Extract from your seed onto a blank disk. The seed survives and loses 1 rank (${e.chance}% success).
+      ${o.chance < 1 ? `<span class="warn">Luck: ${asPct(o.chance)} it removes ${esc(e.t.name)}; otherwise it removes 1 rank of a different trait (${o.pool.filter(x => x.id !== e.t.id).map(x => esc(x.name)).join(', ')}), which you would have to add back.</span>` : ''}`);
+  }
+  steps.push('A failed apply keeps the disk use but still adds heat, so retry on the next generation if the chance gets low. A failed extraction writes nothing to the disk.');
+  const need = [`${disks + (removes.length ? 1 : 0)} blank DNA disk${disks + (removes.length ? 1 : 0) === 1 ? '' : 's'} (more if extractions fail)`];
+  if (removes.length) need.push('Genetic Stabilizer module');
+  const missing = Object.keys(MODULES).filter(k => !S.owned[k] && (k === 'precision' || (k === 'stabilizer' && removes.length)));
+  const advice = !S.owned.precision
+    ? `<p class="warn">You don't have a Precision Extraction module. Worth finding one: set to a trait, every extraction copies exactly that trait. Until then these steps work by luck, shown on each step.</p>` : '';
+  return `<h3>How to do it</h3>${advice}<p class="hint">You need: ${need.join(', ')}.${missing.length ? ` Missing: ${missing.map(k => MODULES[k]).join(', ')}.` : ''}</p>
+    <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>`;
+}
+
+// The goal's sum with this route's numbers, so the user can check it.
+function formulaText(goal, m) {
+  if (goal === 'produce') return `Items per night: ${m.qty} items ÷ ${m.nights} night${m.nights === 1 ? '' : 's'} = <b>${round(m.perNight)}</b>.`;
+  if (goal === 'active') return `Ingredient per night: ${m.qty} items × ${round(m.activeMl)} mL ÷ ${m.nights} night${m.nights === 1 ? '' : 's'} = <b>${round(m.activePerNight)} mL</b>.`;
+  if (goal === 'money') return `Value per night: ${m.qty} items × value ÷ ${m.nights} night${m.nights === 1 ? '' : 's'} = <b>${round(m.moneyPerNight)}</b>.`;
+  return `Seeds back per harvest: <b>${round(m.seeds)}</b> on average.`;
+}
+
+// Plain-words effect of changing a trait from one rank to another (ranks scale as rank^0.75).
+const STAT_WORDS = { GROWTH_SPEED: 'growth speed', HARVEST_QUANTITY: 'items per harvest', ACTIVES: 'ingredient per item', SELL_PRICE: 'sell price', SEED_YIELD: 'seeds back', CALORIES: 'calories', WATER_USE: 'water use', CONTAMINANT_SENSITIVITY: 'contaminant sensitivity', DURABILITY: 'durability' };
+function traitEffect(t, from, to) {
+  const parts = Object.keys(t.pct || {}).map(stat => {
+    const f = G.mult({ [t.id]: to }, stat) / G.mult({ [t.id]: from }, stat);
+    return `${STAT_WORDS[stat] || stat} ×${round(f)}`;
+  });
+  if (t.produces) parts.push(`${round(t.produces[1] * (G.rankScale(to) - G.rankScale(from)))} mL more ${t.produces[0].replace(/_/g, ' ')} per item`);
+  if (t.perennial) parts.push(to > from ? 'regrows after harvest (shorter regrow time)' : 'no longer regrows');
+  return parts.join(', ') || (to > from ? 'adds the trait' : 'removes the trait');
+}
+
+// Why the default goal: plants that feed the chemistry chain are worth their ingredient, the rest their items.
+const defaultGoal = plant => (plant.target ? 'active' : 'produce');
+const DEFAULT_WHY = plant => plant.target
+  ? `Default is ingredient because ${plant.name} is a chemistry ingredient: what matters is how much ${plant.target.name.split(' (')[0].split(',')[0]} it gives.`
+  : `Default is items because ${plant.name}'s harvest is used or sold as items.`;
+
+// The best route for every goal side by side, so you can see what each goal gives up.
+// The tool cannot rank goals for you: items, mL and money are different things. If you sell, compare value/night.
+function compareHtml(plant) {
+  const st = S.plants[plant.id];
+  const goals = Object.keys(GOALS).filter(k => (k !== 'active' || plant.target) && (k !== 'seeds' || plant.returnsSeeds));
+  const now = metrics(plant, startOf(plant));
+  const rows = goals.map(g => {
+    const r = optimise(plant, g)[0];
+    return { g, m: r ? r.m : now, edits: r ? r.ops : 0 };
+  });
+  const best = k => Math.max(...rows.map(r => r.m[k]));
+  const cell = (r, k, digits) => `<td class="${r.m[k] === best(k) && r.m[k] !== now[k] ? 'up' : ''}">${round(r.m[k])}</td>`;
+  return `<h3>Optimise for</h3>
+    <p class="hint">${DEFAULT_WHY(plant)} Items, mL and money are different things, so you pick; if you sell, compare value per night. Click a goal to plan for it; each row shows that goal's best route.</p>
+    <table class="t"><tr><th>Optimise for</th><th>Items/night</th>${plant.target ? '<th>mL/night</th>' : ''}<th>Value/night</th>${plant.returnsSeeds ? '<th>Seeds/harvest</th>' : ''}<th>Edits</th></tr>
+    <tr class="muted"><td>Now (no edits)</td><td>${round(now.perNight)}</td>${plant.target ? `<td>${round(now.activePerNight)}</td>` : ''}<td>${round(now.moneyPerNight)}</td>${plant.returnsSeeds ? `<td>${round(now.seeds)}</td>` : ''}<td>0</td></tr>
+    ${rows.map(r => `<tr><td><button data-p="${plant.id}" data-goal="${r.g}" class="${r.g === st.goal ? 'on' : ''}">${GOALS[r.g]}</button>${r.g === defaultGoal(plant) ? ' <span class="muted">(default)</span>' : ''}</td>
+      ${cell(r, 'perNight')}${plant.target ? cell(r, 'activePerNight') : ''}${cell(r, 'moneyPerNight')}${plant.returnsSeeds ? cell(r, 'seeds') : ''}<td>${r.edits}</td></tr>`).join('')}
+    </table>${st.value == null ? '<p class="hint">Set the sell value to compare value per night.</p>' : ''}`;
+}
+
+function plantCard(plant) {
+  const start = startOf(plant);
+  const st = S.plants[plant.id];
+  const before = metrics(plant, start), routes = optimise(plant);
+  const pick = Math.min(st.route || 0, Math.max(0, routes.length - 1)), best = routes[pick];
+  const unit = { produce: 'items/night', active: 'mL/night', money: 'value/night', seeds: 'seeds/harvest' }[st.goal];
+  const fmtN = v => (typeof v === 'number' ? round(v) : v);
+  const rows = [['Nights per harvest', 'nights'], ['Items per harvest', 'qty'], ['Items per night', 'perNight']]
+    .concat(plant.target ? [['Target ingredient mL per item', 'activeMl'], ['Target ingredient mL per night', 'activePerNight']] : [])
+    .concat([['Sell value per night', 'moneyPerNight']])
+    .concat(plant.returnsSeeds ? [['Seeds back per harvest', 'seeds']] : []);
+  let body = `<p class="muted">${plant.note || ''}${plant.target ? `Target ingredient: ${esc(plant.target.name)}.` : ''}</p>`;
+  if (best) {
+    const changed = G.traits.filter(t => (best.ranks[t.id] || 0) !== (start[t.id] || 0));
+    const list = best.list, gens = best.gens;
+    body += `<h3>Routes</h3><p class="hint">${S.owned.stabilizer ? '' : 'Without a Genetic Stabilizer these routes only add traits: removing one (like Weak) needs it. '}From most output to easiest. Expected tries counts retries: an edit with a 50% chance takes 2 tries on average. Longer routes with more edits appear when you lower the lowest success chance or raise DNA Quality.</p>
+      <table class="t"><tr><th></th><th>Output</th><th>Edits</th><th>Generations</th><th>Worst chance</th><th>Expected tries</th></tr>${routes.map((r, i) => `<tr>
+        <td><button data-p="${plant.id}" data-route="${i}" class="${i === pick ? 'on' : ''}">Route ${i + 1}</button></td>
+        <td>${round(r.s)} ${unit}</td><td>${r.ops}</td><td>${r.gens}</td><td>${r.worst}%</td><td>${round(r.tries)}</td></tr>`).join('')}</table>
+      <h3>Route ${pick + 1}</h3>
+      <table class="t"><tr><th></th><th>Now</th><th>Planned</th></tr>${rows.map(([label, k]) => {
+      const a = before[k], b = best.m[k], better = k === 'nights' ? b < a : b > a;
+      return `<tr><td>${label}</td><td>${fmtN(a)}</td><td class="${a === b ? '' : better ? 'up' : 'down'}">${fmtN(b)}</td></tr>`;
+    }).join('')}</table>
+      <p class="hint">${formulaText(st.goal, best.m)}</p>
+      <h3>Why these trait changes</h3>${changed.length ? `<table class="t"><tr><th>Trait</th><th>Rank</th><th>What it does</th><th>Complexity</th></tr>${changed.map(t => {
+        const from = start[t.id] || 0, to = best.ranks[t.id] || 0;
+        const cost = G.complexity(plant, { ...start, [t.id]: to }) - G.complexity(plant, start);
+        return `<tr><td>${esc(t.name)}</td><td>${from} → ${to}</td><td>${esc(traitEffect(t, from, to))}</td><td>${cost > 0 ? '+' : ''}${cost}</td></tr>`;
+      }).join('')}</table>
+      <p class="hint">Complexity is what lowers each edit's success chance. Of all trait mixes that stay within your lowest success chance, this route gives the highest ${esc(unit)}; the routes below it trade output for easier edits.</p>` : '<p class="muted">Already best for this goal with the traits available.</p>'}
+      ${list.length ? `<h3>Edit order (${list.length} edits over ${gens} generation${gens === 1 ? '' : 's'})</h3>
+      <p class="hint">Grow and harvest between generations: new seeds keep the traits and lose the heat, so the next edits succeed more often.</p>
+      <table class="t"><tr><th>#</th><th>Edit</th><th>Gen</th><th>Complexity</th><th>Success</th></tr>${list.map((e, n) => `<tr><td>${n + 1}</td><td>${e.add ? '+1' : '−1'} ${esc(e.t.name)}</td><td>${e.gen}</td><td>${e.complexity}</td><td class="${e.chance >= S.minSuccess ? '' : 'down'}">${e.chance}%</td></tr>`).join('')}</table>` : ''}
+      ${recipeHtml(plant, list)}`;
+  } else body += `<p class="muted"><b>No useful edits with your setup.</b> ${plant.harvest === 0 ? 'Its harvest comes from the Hydroreed Filter module, not the plant, so trait edits cannot raise it. ' : ''}${plant.innate.complex_genome ? `Its natural Complex Genome adds +${4 * plant.innate.complex_genome} complexity, which can't be removed (it's locked), so every edit falls below your lowest success chance. ` : ''}Lower the lowest success chance, raise DNA Quality, or tick more traits.</p>`;
+  // Collapsed by default: the summary line shows the best route's result so you can scan all plants.
+  const headline = best
+    ? `${GOALS[st.goal].replace('Most ', '')}: ${round(score(st.goal, before))} → <span class="up">${round(best.s)}</span> · ${best.ops} edit${best.ops === 1 ? '' : 's'}, ${best.worst}% worst chance`
+    : 'no useful edits';
+  return `<details class="pcard${best ? '' : ' none'}" data-p="${plant.id}" data-card ${st.open ? 'open' : ''}>
+    <summary class="row" style="margin-bottom:4px;cursor:pointer"><h4>${esc(plant.name)}</h4><span class="muted">${headline}</span></summary>
+    <div class="row" style="margin:4px 0"><label class="muted">Sell value <input type="number" data-p="${plant.id}" data-f="value" value="${st.value ?? ''}" placeholder="?" style="width:60px"></label></div>
+    ${compareHtml(plant)}
+    <p class="hint" style="margin:4px 0">${GOAL_HELP[st.goal]}</p>
+    <div class="muted">${startPicker(plant)} Traits: ${Object.entries(startOf(plant)).map(([id, r]) => `${esc(G.trait(id).name)} ${r}`).join(', ')}</div>
+    ${body}</details>`;
+}
+
+function render() {
+  save();
+  for (const id of ['speed', 'hydroQ', 'dnaQ', 'minSuccess', 'maxRank']) $('#' + id).value = S[id];
+  $('#owned').innerHTML = Object.entries(MODULES).map(([k, name]) => `<label><input type="checkbox" data-own="${k}" ${S.owned[k] ? 'checked' : ''}> ${name}</label>`).join('');
+  $('#traits').innerHTML = G.traits.map(t => `<label title="complexity ${t.c}"><input type="checkbox" data-t="${t.id}" ${S.available[t.id] ? 'checked' : ''} ${t.locked ? 'disabled' : ''}>${esc(t.name)}</label>`).join('');
+  // Most improvable plants first; plants with no useful edit for your setup go last.
+  const gain = p => {
+    const r = optimise(p)[0], base = score(S.plants[p.id].goal, metrics(p, startOf(p)));
+    return r ? r.s / Math.max(base, 1e-9) : 0;
+  };
+  $('#plants').innerHTML = G.plants.map(p => ({ p, g: gain(p) })).sort((a, b) => b.g - a.g).map(x => plantCard(x.p)).join('');
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'importSave') { $('#saveFile').click(); return; }
+  const d = e.target.dataset;
+  if (d.goal) { S.plants[d.p].goal = d.goal; S.plants[d.p].route = 0; render(); return; }
+  if (d.route === undefined) return;
+  S.plants[d.p].route = +d.route;
+  render();
+});
+
+document.addEventListener('change', e => {
+  const t = e.target, d = t.dataset;
+  if (['speed', 'hydroQ', 'dnaQ', 'minSuccess', 'maxRank'].includes(t.id)) S[t.id] = Math.max(t.id === 'hydroQ' || t.id === 'dnaQ' ? -999 : 1, parseInt(t.value, 10) || 0);
+  else if (d.t) S.available[d.t] = t.checked;
+  else if (d.own) S.owned[d.own] = t.checked;
+  else if (t.id === 'saveFile') { importOwned(t.files[0]); t.value = ''; return; }
+  else if (d.p) { S.plants[d.p][d.f] = d.f === 'value' ? (t.value === '' ? null : +t.value) : t.value; if (d.f === 'goal' || d.f === 'start') S.plants[d.p].route = 0; }
+  else return;
+  render();
+});
+// Which DNA Manipulator modules the save owns (loose or installed).
+async function importOwned(file) {
+  if (!file) return;
+  try {
+    const { modules, seeds } = readSave(await file.text(), GAME);
+    S.seeds = seeds.filter(x => SAVE_PLANT[x.plant]).map(x => ({ plant: SAVE_PLANT[x.plant], heat: x.heat, count: x.count,
+      ranks: Object.fromEntries(Object.entries(x.ranks).map(([id, r]) => [saveTrait(id), r]).filter(([id]) => G.trait(id))) }));
+    for (const p of G.plants) S.plants[p.id].start = '';
+    const has = name => modules.some(m => m.count > 0 && m.name.startsWith(name));
+    for (const [k, name] of Object.entries(MODULES)) S.owned[k] = has(name);
+    $('#importStatus').textContent = `Read ${file.name}: ` + Object.entries(MODULES).map(([k, n]) => `${n} ${S.owned[k] ? 'yes' : 'no'}`).join(', ') + `; ${S.seeds.reduce((a, x) => a + x.count, 0)} seeds.`;
+    render();
+  } catch (err) { alert('Could not read that save: ' + err.message); }
+}
+// Remember which plants are open (they start closed).
+document.addEventListener('toggle', e => { const d = e.target.dataset; if (d && d.card !== undefined) { S.plants[d.p].open = e.target.open; save(); } }, true);
+render();
+</script>
+</body>
+</html>

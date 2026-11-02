@@ -11,6 +11,13 @@
 @media (min-width: 760px) { main { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
 #machines, #results { display: grid; gap: 10px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr)); }
 .mcard.skip { opacity: .5; }
+.mcard .grip { cursor: grab; color: var(--muted); font-size: 18px; padding: 0 4px; user-select: none; }
+.dragging { opacity: .4; }
+.drop-over { outline: 2px dashed var(--accent, #4a9eff); }
+#rank { margin: 8px 0; padding-left: 28px; columns: 2 220px; }
+#rank li { cursor: grab; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; margin: 0 0 3px; break-inside: avoid; user-select: none; }
+#rank li.skip { opacity: .5; }
+#rank .grip { color: var(--muted); }
 .mcard h4 { margin: 0; font-size: 14px; flex: 1; }
 .boards { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .boards figure { margin: 0; }
@@ -22,7 +29,7 @@ nav a { color: var(--accent); }
 <body>
 <header>
   <h1>All Machines Planner</h1>
-  <p>Import your save, rank your machines and give each a target. The planner meets the targets in rank order with the fewest valuable modules, then spends what is left. <nav style="display:inline"><a href="index.html">Single machine →</a></nav></p>
+  <p>Import your save, rank your machines and give each a target. The planner meets the targets in rank order with the fewest valuable modules, then spends what is left. <nav style="display:inline"><a href="index.html">Single machine →</a> · <a href="chem.html">Chemistry recipes →</a> · <a href="plants.html">Plant DNA →</a></nav></p>
 </header>
 <main>
   <section>
@@ -34,6 +41,7 @@ nav a { color: var(--accent); }
     <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
       Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose.
       Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
+    <ol id="rank"></ol>
     <div id="machines"></div>
   </section>
 
@@ -121,17 +129,20 @@ function currentHtml(m) {
 
 function renderMachines() {
   $('#newType').innerHTML = GAME.machines.map((g, i) => `<option value="${i}">${esc(g.name)}</option>`).join('');
+  // Compact rank list: short rows, so any drop target fits on screen (the cards below are tall).
+  $('#rank').innerHTML = S.machines.length > 1 ? S.machines.map(m => `<li class="${m.include ? '' : 'skip'}" data-card="${m.key}" draggable="true" data-k="${m.key}">
+    <span class="grip">⠿</span> ${esc(m.name)}${m.userTarget ? ' <span class="ok">your target</span>' : ''}</li>`).join('') : '';
   $('#machines').innerHTML = S.machines.map((m, i) => {
     const g = gm(m), bays = GAME.bays[g.bay];
-    return `<div class="mcard${m.include ? '' : ' skip'}">
+    return `<div class="mcard${m.include ? '' : ' skip'}" data-card="${m.key}">
       <div class="row" style="margin-bottom:4px">
-        <b>${i + 1}.</b>
+        <span class="grip" draggable="true" data-k="${m.key}" title="Drag to change rank">⠿</span><b>${i + 1}.</b>
         <h4>${esc(m.name)}</h4>
         <button data-k="${m.key}" data-act="up" ${i ? '' : 'disabled'}>↑</button><button data-k="${m.key}" data-act="down" ${i < S.machines.length - 1 ? '' : 'disabled'}>↓</button>
         <label class="muted"><input type="checkbox" data-k="${m.key}" data-f="include" ${m.include ? 'checked' : ''}> Plan</label>
         <button data-k="${m.key}" data-act="remove">Remove</button>
       </div>
-      ${currentHtml(m)}
+      ${currentHtml(m)}${m.missing ? '<div class="warn" style="font-size:12px">Not in the latest save import. Kept with its old settings and layout; Remove it if it is gone.</div>' : ''}
       <div class="${m.userTarget ? 'ok' : 'muted'}" style="font-size:12px">${m.userTarget ? 'Your target: planned before default targets, in rank order.' : 'Default target: keep what it does now. Change it to make it yours.'}</div>
       <div class="row stack" style="margin:6px 0 0">
         <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
@@ -160,8 +171,8 @@ function render() {
 }
 
 // Physical moves: each machine keeps its own copies first, then takes loose ones, then takes from other machines.
-function sourcesFor(results) {
-  const stock = S.pool.map(g => ({ ...(g.where || { 0: g.count }) }));
+function sourcesFor(results, pool) {
+  const stock = pool.map(g => ({ ...(g.where || { 0: g.count }) }));
   const out = new Map();
   const takeFrom = (id, n, where, list) => {
     const k = Math.min(n, stock[id][where] || 0);
@@ -178,7 +189,7 @@ function sourcesFor(results) {
       need = takeFrom(+id, need, 0, from);
       for (const where of Object.keys(stock[id])) if (need > 0 && where !== '0') need = takeFrom(+id, need, where, from);
       const text = from.map(([where, k]) => (String(where) === String(m.uid) ? `${k} already here` : where == 0 ? `${k} loose` : `${k} from ${machineName(where)}`)).join(', ');
-      lines.push(`${esc(S.pool[id].name)} ×${n} <span class="muted">— ${esc(moduleDetails(S.pool[id]))}${text ? `; ${esc(text)}` : ''}</span>`);
+      lines.push(`${esc(pool[id].name)} ×${n} <span class="muted">— ${esc(moduleDetails(pool[id]))}${text ? `; ${esc(text)}` : ''}</span>`);
     }
     out.set(m.key, lines);
   }
@@ -188,7 +199,7 @@ function sourcesFor(results) {
 function renderResults() {
   if (!plan) { $('#results').innerHTML = ''; return; }
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t]));
-  const sources = sourcesFor(plan.results.filter(x => x.r));
+  const sources = sourcesFor(plan.results.filter(x => x.r), plan.pool);
   const cards = plan.results.map(({ m, r, unreachable }) => {
     const g = gm(m), layout = layoutOf(m), grid = gridOf(layout);
     const now = m.current ? `<figure><figcaption>Now</figcaption>${boardHtml(layout, m.current.installed.map((x, id) => ({ id, cells: x.cells })), m.current.installed.map(x => x.module), 22)}</figure>` : '';
@@ -201,14 +212,15 @@ function renderResults() {
       ${!unreachable ? '' : m.userTarget
         ? '<p class="bad">Your target is not reachable with the modules left after the higher-ranked targets you set; maximised its priorities instead. Rank it higher to put it first.</p>'
         : '<p class="warn">Default target (keep what it does now) not reachable once your targets took their modules; maximised its priorities instead.</p>'}
-      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, S.pool)}</figure>
+      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool)}</figure>
         <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         <b>Modules</b><ul class="plain">${(sources.get(m.key) || []).map(l => `<li>${l}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
       </div>
     </div>`;
   }).join('');
-  const left = S.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
-  $('#results').innerHTML = cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n} <span class="muted">— ${esc(moduleDetails(g))}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
+  const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
+  const stale = plan.stale ? '<p class="warn">This plan was made before your last save import. Plan again to use the new save.</p>' : '';
+  $('#results').innerHTML = stale + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n} <span class="muted">— ${esc(moduleDetails(g))}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
 }
 
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
@@ -254,9 +266,9 @@ async function planAll() {
     if (r) take(r.placements, 1);
     results.push({ m, r, unreachable });
   }
-  plan = { results, avail, types: typesFor(ms[0], 0) };
+  plan = { results, avail, types: typesFor(ms[0], 0), pool: S.pool };
   // Keep a compact copy for overlay.html.
-  const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r));
+  const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r), S.pool);
   S.lastPlan = { at: Date.now(), pool: S.pool.map(g => ({ name: g.name, node: !!g.node, details: moduleDetails(g) })),
     machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
       totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, sources: sources.get(m.key) || [] })) };
@@ -271,11 +283,15 @@ async function importSave(file) {
   let data;
   try { data = readSave(await file.text(), GAME); } catch (err) { alert('Could not read that save: ' + err.message); return; }
   if (!data.machines.length && !data.modules.length) { alert('Nothing found. Pick save_0.es3.'); return; }
-  if (S.machines.length && !confirm('Replace the current machines and module pool with the ones from this save?')) return;
-  S.pool = data.modules;
-  S.machines = data.machines.map(x => {
+  // The same save again (it shares machine ids with what is here): update in place. Your ranks and
+  // targets stay, new machines are added, machines missing from the save are kept and flagged.
+  const known = new Map(S.machines.filter(m => m.uid != null).map(m => [String(m.uid), m]));
+  const same = data.machines.some(x => known.has(String(x.uid)));
+  if (!same && S.machines.length && !confirm('This looks like a different save. Replace the current machines and module pool with the ones from it?')) return;
+  const fromSave = (x, m) => {
     const g = GAME.machines[x.gameIndex];
-    const m = newMachine(x.gameIndex, { uid: x.uid, name: x.name, stage: x.stage, current: { totals: x.totals, job: x.job, installed: x.installed } });
+    Object.assign(m, { name: x.name, stage: x.stage, missing: false, current: { totals: x.totals, job: x.job, installed: x.installed } });
+    if (m.userTarget) return m;
     // Default targets: keep what the machine does now, for the stats that matter on it
     // (Performance/Quality; Efficiency only lowers power use, so it is left free).
     const matters = k => g.presets.some(p => p.weights[k] > 0 || p.mins[k] !== null);
@@ -286,9 +302,26 @@ async function importSave(file) {
       m.priority = [null, null, null];
     }
     return m;
-  });
-  plan = null; render();
-  $('#status').textContent = `Imported ${data.machines.length} machines and ${data.modules.reduce((s, g) => s + g.count, 0)} modules/nodes.`;
+  };
+  const fresh = x => fromSave(x, newMachine(x.gameIndex, { uid: x.uid }));
+  let added = 0;
+  if (same) {
+    const seen = new Set(data.machines.map(x => String(x.uid)));
+    for (const m of S.machines) if (m.uid != null && !seen.has(String(m.uid))) m.missing = true;
+    for (const x of data.machines) {
+      if (known.has(String(x.uid))) fromSave(x, known.get(String(x.uid)));
+      else { S.machines.push(fresh(x)); added++; }
+    }
+    if (plan) plan.stale = true; // keep showing the old plan; it uses the old module pool
+  } else {
+    S.machines = data.machines.map(fresh);
+    plan = null;
+  }
+  // The pool is what you own now: the save is the truth, so sold or used-up modules leave it.
+  S.pool = data.modules;
+  render();
+  const gone = S.machines.filter(m => m.missing).length;
+  $('#status').textContent = `${same ? 'Updated from save' : 'Imported'}: ${data.machines.length} machines${same ? ` (${added} new${gone ? `, ${gone} not in this save` : ''})` : ''}, ${data.modules.reduce((s, g) => s + g.count, 0)} modules/nodes.`;
 }
 
 document.addEventListener('click', e => {
@@ -311,6 +344,37 @@ document.addEventListener('click', e => {
     else { const j = d.act === 'up' ? i - 1 : i + 1; [S.machines[i], S.machines[j]] = [S.machines[j], S.machines[i]]; }
     plan = null; render();
   }
+});
+
+// Drag a card by its grip to change its rank.
+let dragKey = null;
+const cardOf = e => e.target.closest?.('[data-card]');
+document.addEventListener('dragstart', e => {
+  const src = e.target.closest?.('[draggable="true"][data-k]');
+  if (!src) return;
+  dragKey = src.dataset.k;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragKey);
+  src.closest('[data-card]').classList.add('dragging');
+});
+document.addEventListener('dragover', e => {
+  const c = cardOf(e);
+  if (!dragKey || !c) return;
+  e.preventDefault();
+  document.querySelectorAll('.drop-over').forEach(x => x !== c && x.classList.remove('drop-over'));
+  c.classList.add('drop-over');
+});
+document.addEventListener('drop', e => {
+  const c = cardOf(e);
+  if (!dragKey || !c) return;
+  e.preventDefault();
+  const from = S.machines.findIndex(m => m.key === dragKey), to = S.machines.findIndex(m => m.key === c.dataset.card);
+  dragKey = null; // the re-render removes the dragged card, so its dragend never reaches the document
+  if (from >= 0 && to >= 0 && from !== to) { S.machines.splice(to, 0, S.machines.splice(from, 1)[0]); plan = null; render(); }
+});
+document.addEventListener('dragend', () => {
+  dragKey = null;
+  document.querySelectorAll('.drop-over, .dragging').forEach(x => x.classList.remove('drop-over', 'dragging'));
 });
 
 document.addEventListener('change', e => {
