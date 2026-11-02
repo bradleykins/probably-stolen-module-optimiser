@@ -39,7 +39,7 @@ nav a { color: var(--accent); }
       <select id="newType" aria-label="Machine type"></select><button id="addMachine">Add machine</button>
     </div>
     <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
-      Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose.
+      Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose. A job deadline is a stop point: Performance stops at what the deadline needs, and spare modules go to the other machines.
       Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
     <ol id="rank"></ol>
     <div id="machines"></div>
@@ -95,7 +95,9 @@ function presetMatches(m, p) {
 function effectiveMins(m) {
   const mins = m.mins.slice();
   const need = jobPerformance(m);
-  if (need !== null) mins[0] = Math.max(mins[0] ?? -Infinity, need);
+  // The deadline sets Performance by itself; it replaces the imported "keep what it does now" minimum
+  // (which would otherwise lock in a faster speed than the deadline needs).
+  if (need !== null) mins[0] = need;
   return mins;
 }
 function jobPerformance(m) {
@@ -147,7 +149,9 @@ function renderMachines() {
       <div class="row stack" style="margin:6px 0 0">
         <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
         <label>Preset<select data-k="${m.key}" data-f="preset"><option value="">Custom</option>${g.presets.map((p, j) => `<option value="${j}" ${presetMatches(m, p) ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
-        ${STATS.map((s, k) => `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`).join('')}
+        ${STATS.map((s, k) => (k === 0 && jobPerformance(m) !== null
+          ? `<label title="Set by the job deadline">Min ${s}<input type="number" value="${jobPerformance(m)}" disabled></label>`
+          : `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`)).join('')}
       </div>
       ${jobHtml(m)}
       <div class="row stack" style="margin:4px 0 0">
@@ -254,6 +258,8 @@ async function planAll() {
   // Pass 2: each machine, in order, keeps its target and maximises its priorities with what is left.
   for (const [i, m] of ms.entries()) {
     const p1 = pass1.get(m.key), unreachable = p1 === null, weights = priorityWeights(m.priority);
+    // A job deadline is a stop point: once it is met, spare modules do not go into more Performance here.
+    if (!unreachable && jobPerformance(m) !== null) weights[0] = 0;
     if (p1) take(p1.placements, -1);
     let r = p1 || null;
     if (weights.some(x => x > 0)) {
