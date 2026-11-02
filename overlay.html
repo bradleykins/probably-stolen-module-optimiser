@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Layout Overlay</title>
+<link rel="stylesheet" href="style.css">
+<style>
+body { font-size: 13px; }
+.wrap { padding: 8px; }
+.wrap select { flex: 1; min-width: 0; }
+ol { margin: 6px 0; padding-left: 0; list-style: none; }
+ol li { padding: 2px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row"><button id="prev" aria-label="Previous">◀</button><select id="pick" aria-label="Layout"></select><button id="next" aria-label="Next">▶</button></div>
+  <div id="view"></div>
+  <p class="hint">Shows the latest plan (All Machines Planner) and saved layouts. Updates when you re-plan. With overlay.ahk running, Ctrl+Alt+O hides and shows this window.</p>
+</div>
+<script src="ui.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const read = key => { try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; } };
+
+// Everything worth showing: the latest plan's machines, then layouts saved on the single-machine page.
+function entries() {
+  const out = [], plan = read('ps-plan-v1').lastPlan;
+  if (plan) for (const m of plan.machines)
+    out.push({ title: `Plan · ${m.name}`, layout: m.layout, placements: m.placements, modules: plan.pool, totals: m.totals, sources: m.sources });
+  for (const x of read('ps-module-optimiser-v3').savedLayouts || [])
+    out.push({ title: `Saved · ${x.machineName} — ${x.stageName}`, layout: x.layout, placements: x.placements, modules: x.modules, totals: x.totals, sources: [] });
+  return out;
+}
+
+let pick = 0;
+try { pick = +localStorage.getItem('ps-overlay-pick') || 0; } catch {}
+
+function render() {
+  const list = entries();
+  if (!list.length) { $('#pick').innerHTML = ''; $('#view').innerHTML = '<p class="hint">Nothing to show yet: run a plan or save a layout.</p>'; return; }
+  pick = Math.min(Math.max(0, pick), list.length - 1);
+  try { localStorage.setItem('ps-overlay-pick', pick); } catch {}
+  $('#pick').innerHTML = list.map((e, i) => `<option value="${i}" ${i === pick ? 'selected' : ''}>${esc(e.title)}</option>`).join('');
+  const e = list[pick];
+  const items = e.placements.map((p, n) => {
+    const m = e.modules[p.id] || { name: '?' };
+    return `<li><span class="swatch" style="background:${color(n + 1)}"></span><b>${m.node ? 'N' : ''}${n + 1}</b> ${esc(m.name)}</li>`;
+  }).join('');
+  $('#view').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 40)}
+    <div style="margin-top:6px">${STATS.map((s, k) => `${s} ${fmt(e.totals[k])}%`).join(' · ')}</div>
+    <ol>${items}</ol>
+    ${e.sources.length ? `<b>Where the modules come from</b><ul class="plain" style="margin:4px 0;padding-left:18px">${e.sources.map(l => `<li>${l}</li>`).join('')}</ul>` : ''}`;
+}
+
+$('#pick').addEventListener('change', e => { pick = +e.target.value; render(); });
+$('#prev').addEventListener('click', () => { pick--; render(); });
+$('#next').addEventListener('click', () => { pick++; render(); });
+document.addEventListener('keydown', e => { if (e.key === 'ArrowLeft') { pick--; render(); } if (e.key === 'ArrowRight') { pick++; render(); } });
+window.addEventListener('storage', render); // the planner saved a new plan in another window
+render();
+</script>
+</body>
+</html>

@@ -91,7 +91,7 @@ const GAME = {
   // presets: targets to pick from. mins = minimum [P, E, Q] totals (null = none), weights = what to maximise after.
   machines: [
     {
-      name: 'Water Purifier', bay: 'standard', accepts: ['universal'], power: 4,
+      name: 'Water Purifier', id: 'water_purifier', bay: 'standard', accepts: ['universal'], power: 4,
       stats: 'Quality sets max purity (raw total; the tooltip ratio 0.5 is not used). Performance cleans more per cycle.',
       readout: (P, E, Q) => {
         const steps = [[200, '100%'], [100, '99.9%'], [75, '99.8%'], [50, '99.65%'], [25, '99.35%'], [15, '99.15%']];
@@ -107,7 +107,7 @@ const GAME = {
       ],
     },
     {
-      name: 'Moisture Farm', bay: 'standard', accepts: ['universal'], power: 6,
+      name: 'Moisture Farm', id: 'moisture_farm', bay: 'standard', accepts: ['universal'], power: 6,
       stats: 'Quality sets the water grade (raw total + 50). Performance sets output volume.',
       readout: (P, E, Q) => {
         const g = Q + 50;
@@ -122,7 +122,7 @@ const GAME = {
       ],
     },
     {
-      name: 'Furnace', bay: 'standard', accepts: ['universal', 'furnace'], power: 8,
+      name: 'Furnace', id: 'furnace', bay: 'standard', accepts: ['universal', 'furnace'], power: 8,
       stats: 'Quality: +1 ingot per batch for every 100 (raw total; Blast module takes 1 off). Performance has no effect.',
       readout: (P, E, Q) => [`Extra ingots per batch: ${Math.max(0, trunc(Q / 100))}`, `Power: ${powerUse(8, E)} per cycle`],
       presets: [
@@ -132,7 +132,7 @@ const GAME = {
       ],
     },
     {
-      name: 'Evaporator', bay: 'small', accepts: ['universal', 'evaporator'], power: 6,
+      name: 'Evaporator', id: 'evaporator', bay: 'small', accepts: ['universal', 'evaporator'], power: 6,
       stats: 'Quality = % of evaporated liquid recovered as distillate (0-100). Performance = amount per cycle.',
       readout: (P, E, Q) => [`Distillate recovered: ${Math.min(100, Math.max(0, Q))}%`, `Amount per cycle: ${Math.max(0, 100 + P)}%`, `Power: ${powerUse(6, E)} per cycle`],
       presets: [
@@ -141,13 +141,13 @@ const GAME = {
       ],
     },
     {
-      name: 'Mirage Projector', bay: 'standard', accepts: ['universal'], power: 16,
+      name: 'Mirage Projector', id: 'mirage_projector', bay: 'standard', accepts: ['universal'], power: 16,
       stats: 'Attractiveness = 100% + Quality/2 + Performance/4.',
       readout: (P, E, Q) => [`Attractiveness: ${Math.max(0, 100 + trunc(Q / 2) + trunc(P / 4))}%`, `Power: ${powerUse(16, E)} per cycle`],
       presets: [{ label: 'Most attractive', mins: [null, null, null], weights: [0.25, 0.05, 0.5] }],
     },
     {
-      name: 'Alarm System', bay: 'standard', accepts: ['universal', 'alarm'], power: 4,
+      name: 'Alarm System', id: 'security_alarm', bay: 'standard', accepts: ['universal', 'alarm'], power: 4,
       stats: 'Theft prevention = 50% + Performance. Quality has no effect.',
       readout: (P, E) => [`Theft prevention: ${Math.max(0, P + 50)}%`, `Power: ${powerUse(4, E)} per cycle`],
       presets: [
@@ -156,13 +156,13 @@ const GAME = {
       ],
     },
     {
-      name: 'Cryptographic Desequencer', bay: 'standard', accepts: ['universal', 'alarm'], power: 10,
+      name: 'Cryptographic Desequencer', id: 'desequencer', progress: { base: 33 }, jobs: [['Command keycard', 150], ['Security keycard', 125], ['Medical keycard', 100], ['Engineering keycard', 100], ['Supply keycard', 75], ['Service keycard', 75]], bay: 'standard', accepts: ['universal', 'alarm'], power: 10,
       stats: 'Performance = progress per cycle (base 33). Quality has no effect.',
       readout: (P, E) => [`Progress per cycle: ${speed(33, P)}`, `Power: ${powerUse(10, E)} per cycle`],
       presets: [{ label: 'Fastest', mins: [null, null, null], weights: [1, 0.25, 0] }],
     },
     {
-      name: 'DNA Manipulator', bay: 'standard', accepts: ['universal', 'dna'], power: 12,
+      name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, bay: 'standard', accepts: ['universal', 'dna'], power: 12,
       stats: 'Success chance = 95% − 5% × complexity + Quality/2. Performance/2 speeds progress (base 10).',
       readout: (P, E, Q) => [`Success chance bonus: ${pct(trunc(Q / 2))}`, `Progress per cycle: ${speed(10, P, 2)}`, `Power: ${powerUse(12, E)} per cycle`],
       presets: [
@@ -172,7 +172,7 @@ const GAME = {
       ],
     },
     {
-      name: 'Hydroponic System', bay: 'standard', accepts: ['universal', 'hydroponic'], power: 8,
+      name: 'Hydroponic System', id: 'hydroponic', progress: { base: 8, ratio: 2 }, bay: 'standard', accepts: ['universal', 'hydroponic'], power: 8,
       stats: 'Quality/2 = % more harvest. Performance/2 speeds growth (base 8 per cycle).',
       readout: (P, E, Q) => [`Harvest: ${pct(trunc(Q / 2))}`, `Growth per cycle: ${speed(8, P, 2)}`, `Power: ${powerUse(8, E)} per cycle`],
       presets: [
@@ -182,7 +182,7 @@ const GAME = {
       ],
     },
     {
-      name: '3D Printer', bay: 'standard', accepts: ['universal', 'printer'], power: 8,
+      name: '3D Printer', id: 'printer', progress: { base: 24 }, bay: 'standard', accepts: ['universal', 'printer'], power: 8,
       stats: 'Quality/4 = print quality (melee condition roll 20-30 + Quality/4: Good at 60, Excellent at 90). Performance = progress (base 24).',
       readout: (P, E, Q) => {
         const q = trunc(Q / 4);
@@ -195,13 +195,23 @@ const GAME = {
       ],
     },
     {
-      name: 'Deal Maker', bay: 'standard', accepts: ['universal'], power: 25,
+      name: 'Deal Maker', id: 'deal_maker', bay: 'standard', accepts: ['universal'], power: 25,
       stats: 'Chance bonus = 10% + Quality/10. Both Efficiency and Performance lower power use.',
       readout: (P, E, Q) => [`Chance increase: ${Math.max(0, 10 + trunc(Q / 10))}%`, `Power: ${powerUse(25, E + P)} per cycle`],
       presets: [{ label: 'Best chance', mins: [null, null, null], weights: [0.05, 0.05, 1] }],
     },
   ],
   notOptimised: 'Blender, Heating Plate and Chem Finisher only take the Chemical Equipment Module, which has no stats.',
+};
+
+// Progress machines run once per night. Work done per night at a Performance total, and the
+// lowest Performance that finishes `work` within `nights` (null if out of reach).
+GAME.speedOf = (m, P) => speed(m.progress.base, P, m.progress.ratio);
+GAME.nightsFor = (m, P, work) => { const s = GAME.speedOf(m, P); return s > 0 ? Math.ceil(work / s) : Infinity; };
+GAME.minPerformance = (m, work, nights) => {
+  const need = Math.ceil(work / Math.max(1, nights));
+  for (let P = -100; P <= 2000; P++) if (GAME.speedOf(m, P) >= need) return P;
+  return null;
 };
 
 if (typeof module !== 'undefined') module.exports = GAME;

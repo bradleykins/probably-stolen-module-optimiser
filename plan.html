@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>All Machines Planner</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.mcard { border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-width: 0; }
+/* Two panels: machines (narrower) and plan results (wider). Inside each, cards flow into as many columns as fit. */
+@media (min-width: 760px) { main { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
+#machines, #results { display: grid; gap: 10px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr)); }
+.mcard.skip { opacity: .5; }
+.mcard h4 { margin: 0; font-size: 14px; flex: 1; }
+.boards { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.boards figure { margin: 0; }
+.boards figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+ul.plain { margin: 4px 0; padding-left: 18px; }
+nav a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>All Machines Planner</h1>
+  <p>Import your save, rank your machines and give each a target. The planner meets the targets in rank order with the fewest valuable modules, then spends what is left. <nav style="display:inline"><a href="index.html">Single machine →</a></nav></p>
+</header>
+<main>
+  <section>
+    <h2>1. Machines, in priority order</h2>
+    <div class="row">
+      <button class="primary" id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden>
+      <select id="newType" aria-label="Machine type"></select><button id="addMachine">Add machine</button>
+    </div>
+    <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
+      Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose.
+      Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
+    <div id="machines"></div>
+  </section>
+
+  <section>
+    <h2>2. Plan</h2>
+    <div class="row">
+      <button class="primary" id="solve">Plan all machines</button><button id="stop" disabled>Stop</button>
+      <button id="openOverlay" title="Small window to keep over the game. With overlay.ahk running, Ctrl+Alt+O shows/hides it.">Open overlay</button>
+      <label class="muted">Seconds per machine <input type="number" id="seconds" min="1" max="120"></label>
+      <label><input type="checkbox" id="flip"> Allow mirroring</label>
+    </div>
+    <p id="status" class="muted"></p>
+    <div id="pool"></div>
+    <div id="results"></div>
+  </section>
+</main>
+<script src="game-data.js"></script>
+<script src="solver.js"></script>
+<script src="savegame.js"></script>
+<script src="ui.js"></script>
+<script>
+const KEY = 'ps-plan-v1';
+const { evaluate } = solverModule();
+const DEFAULT = { machines: [], pool: [], seconds: 6, flip: true };
+let S;
+try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
+let plan = null, worker = null, stopped = false;
+
+const $ = s => document.querySelector(s);
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const gm = m => GAME.machines[m.gameIndex];
+const layoutOf = m => GAME.bays[gm(m).bay][m.stage].layout;
+const accepts = (m, g) => g.node || gm(m).accepts.includes(g.type || 'universal');
+const machineName = uid => (S.machines.find(m => String(m.uid) === String(uid)) || {}).name || `machine #${uid}`;
+// How much a module is worth keeping free: its positive stats, plus 1 so fewer modules is better.
+const costOf = g => (g.node ? 4 : g.base.reduce((s, b) => s + Math.max(0, b), 0) + 1);
+
+function newMachine(gameIndex, extra = {}) {
+  const t = presetTarget(GAME.machines[gameIndex].presets[0]);
+  return { key: 'm' + Date.now() + Math.random().toString(36).slice(2, 6), gameIndex, stage: 0, include: true,
+    mins: [null, null, null], priority: t.priority, job: null, ...extra };
+}
+
+// Minimums including the job deadline (a job needs a Performance level).
+function effectiveMins(m) {
+  const mins = m.mins.slice();
+  const need = jobPerformance(m);
+  if (need !== null) mins[0] = Math.max(mins[0] ?? -Infinity, need);
+  return mins;
+}
+function jobPerformance(m) {
+  if (!m.job || !gm(m).progress || !(m.job.work > 0) || !(m.job.nights > 0)) return null;
+  return GAME.minPerformance(gm(m), m.job.work, m.job.nights);
+}
+
+function jobHtml(m) {
+  const g = gm(m);
+  if (!g.progress) return '';
+  const jobs = g.jobs || [];
+  const need = jobPerformance(m);
+  return `<div class="row stack" style="margin:4px 0">
+    <label>Job${jobs.length ? `<select data-k="${m.key}" data-f="jobPick"><option value="">Custom</option>${jobs.map(([n, w]) => `<option value="${w}" ${m.job && +m.job.work === w ? 'selected' : ''}>${esc(n)} (${w})</option>`).join('')}</select>` : ''}</label>
+    <label>Work<input type="number" min="0" data-k="${m.key}" data-f="jobWork" value="${m.job?.work ?? ''}" placeholder="none"></label>
+    <label>Within nights<input type="number" min="1" data-k="${m.key}" data-f="jobNights" value="${m.job?.nights ?? ''}" placeholder="—"></label>
+    <span class="muted" style="align-self:end">${need === null ? (m.job?.work ? 'out of reach' : '') : `needs Performance ≥ ${need}`}</span>
+  </div>`;
+}
+
+function currentHtml(m) {
+  if (!m.current) return '<span class="muted">Added by hand (empty bay).</span>';
+  const c = m.current, P = c.totals[0];
+  let job = '';
+  if (c.job && gm(m).progress) {
+    const left = Math.max(0, c.job.target - c.job.current);
+    job = left ? ` · job ${esc(c.job.label || '')} ${c.job.current}/${c.job.target}, ${GAME.nightsFor(gm(m), P, left)} more night(s) at ${GAME.speedOf(gm(m), P)}/night` : ' · job finished';
+  }
+  return `<span class="muted">Now: ${c.totals.map(fmt).join(' / ')} (P/E/Q), ${c.installed.length} item(s) installed${job}</span>`;
+}
+
+function renderMachines() {
+  $('#newType').innerHTML = GAME.machines.map((g, i) => `<option value="${i}">${esc(g.name)}</option>`).join('');
+  $('#machines').innerHTML = S.machines.map((m, i) => {
+    const g = gm(m), bays = GAME.bays[g.bay];
+    return `<div class="mcard${m.include ? '' : ' skip'}">
+      <div class="row" style="margin-bottom:4px">
+        <b>${i + 1}.</b>
+        <h4>${esc(m.name)}</h4>
+        <button data-k="${m.key}" data-act="up" ${i ? '' : 'disabled'}>↑</button><button data-k="${m.key}" data-act="down" ${i < S.machines.length - 1 ? '' : 'disabled'}>↓</button>
+        <label class="muted"><input type="checkbox" data-k="${m.key}" data-f="include" ${m.include ? 'checked' : ''}> Plan</label>
+        <button data-k="${m.key}" data-act="remove">Remove</button>
+      </div>
+      ${currentHtml(m)}
+      <div class="row stack" style="margin:6px 0 0">
+        <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
+        <label>Preset<select data-k="${m.key}" data-f="preset"><option value="">Custom</option>${g.presets.map((p, j) => `<option value="${j}">${esc(p.label)}</option>`).join('')}</select></label>
+        ${STATS.map((s, k) => `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`).join('')}
+      </div>
+      ${jobHtml(m)}
+      <div class="row stack" style="margin:4px 0 0">
+        ${['1st', '2nd', '3rd'].map((label, r) => `<label>Then ${label}<select data-k="${m.key}" data-f="prio${r}"><option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${m.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('')}
+      </div>
+      <p class="hint" style="margin:6px 0 0">${esc(g.stats)}</p>
+    </div>`;
+  }).join('') || '<p class="hint">Import your save, or add machines by hand.</p>';
+}
+
+function renderPool() {
+  const total = S.pool.reduce((s, g) => s + g.count, 0);
+  const loose = S.pool.reduce((s, g) => s + (g.where?.[0] || 0), 0);
+  $('#pool').innerHTML = total ? `<p class="muted">Module pool: ${total} items (${S.pool.length} kinds); ${total - loose} installed in machines now, ${loose} loose. Every owned module is available to the plan.</p>` : '';
+}
+
+function render() {
+  save();
+  $('#seconds').value = S.seconds; $('#flip').checked = S.flip;
+  renderMachines(); renderPool(); renderResults();
+}
+
+// Physical moves: each machine keeps its own copies first, then takes loose ones, then takes from other machines.
+function sourcesFor(results) {
+  const stock = S.pool.map(g => ({ ...(g.where || { 0: g.count }) }));
+  const out = new Map();
+  const takeFrom = (id, n, where, list) => {
+    const k = Math.min(n, stock[id][where] || 0);
+    if (k > 0) { stock[id][where] -= k; list.push([where, k]); }
+    return n - k;
+  };
+  for (const { m, r } of results) {
+    const used = {};
+    for (const p of r.placements) used[p.id] = (used[p.id] || 0) + 1;
+    const lines = [];
+    for (const [id, n] of Object.entries(used)) {
+      const from = [];
+      let need = takeFrom(+id, n, m.uid ?? -1, from);
+      need = takeFrom(+id, need, 0, from);
+      for (const where of Object.keys(stock[id])) if (need > 0 && where !== '0') need = takeFrom(+id, need, where, from);
+      const text = from.map(([where, k]) => (String(where) === String(m.uid) ? `${k} already here` : where == 0 ? `${k} loose` : `${k} from ${machineName(where)}`)).join(', ');
+      lines.push(`${esc(S.pool[id].name)} ×${n}${text ? ` <span class="muted">(${esc(text)})</span>` : ''}`);
+    }
+    out.set(m.key, lines);
+  }
+  return out;
+}
+
+function renderResults() {
+  if (!plan) { $('#results').innerHTML = ''; return; }
+  const byId = Object.fromEntries(plan.types.map(t => [t.id, t]));
+  const sources = sourcesFor(plan.results.filter(x => x.r));
+  const cards = plan.results.map(({ m, r, unreachable }) => {
+    const g = gm(m), layout = layoutOf(m), grid = gridOf(layout);
+    const now = m.current ? `<figure><figcaption>Now</figcaption>${boardHtml(layout, m.current.installed.map((x, id) => ({ id, cells: x.cells })), m.current.installed.map(x => x.module), 22)}</figure>` : '';
+    if (!r) return `<div class="mcard"><h4>${esc(m.name)}</h4><p class="muted">No target or priorities: nothing planned.</p></div>`;
+    const totals = evaluate(grid, r.placements, byId).totals, mins = effectiveMins(m);
+    const tot = STATS.map((s, k) => `${s} ${fmt(totals[k])}%${mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`}`).join(' · ');
+    const job = m.job?.work > 0 && g.progress ? `<div>Job of ${m.job.work} work: ${GAME.nightsFor(g, totals[0], m.job.work)} night(s) at ${GAME.speedOf(g, totals[0])}/night${m.job.nights ? ` (target ≤ ${m.job.nights})` : ''}</div>` : '';
+    return `<div class="mcard">
+      <h4>${esc(m.name)}</h4>
+      ${unreachable ? '<p class="bad">Target not reachable with the modules left at its turn; maximised its priorities instead.</p>' : ''}
+      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, S.pool)}</figure>
+        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+        <b>Modules</b><ul class="plain">${(sources.get(m.key) || []).map(l => `<li>${l}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
+      </div>
+    </div>`;
+  }).join('');
+  const left = S.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
+  $('#results').innerHTML = cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n}</li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
+}
+
+const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
+
+async function planAll() {
+  const ms = S.machines.filter(m => m.include);
+  if (!ms.length || !S.pool.length) { $('#status').textContent = 'Import a save (or add machines and modules) first.'; return; }
+  stopped = false;
+  $('#solve').disabled = true; $('#stop').disabled = false;
+  const avail = S.pool.map(g => g.count);
+  const take = (placements, sign) => placements.forEach(p => (avail[p.id] -= sign));
+  const typesFor = (m, costScale) => S.pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
+    node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback,
+    count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) }));
+  const budget = Math.max(1, S.seconds) * 1000;
+  const opts = (weights, mins) => ({ weights, mins, rotate: true, flip: S.flip, heuristicMs: Math.min(3000, budget / 2), timeLimitMs: budget });
+  const step = (pass, i, m) => ($('#status').textContent = `${pass} — ${i + 1}/${ms.length}: ${m.name}…`);
+  const pass1 = new Map(), results = [];
+
+  // Pass 1: meet each target, in priority order, with the cheapest modules that do it.
+  for (const [i, m] of ms.entries()) {
+    const mins = effectiveMins(m);
+    if (mins.every(v => v === null)) continue;
+    step('Meeting targets', i, m);
+    const r = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 1), opts([0, 0, 0], mins));
+    if (stopped) return;
+    if (r.found) { take(r.placements, 1); pass1.set(m.key, r); } else pass1.set(m.key, null);
+  }
+  // Pass 2: each machine, in order, keeps its target and maximises its priorities with what is left.
+  for (const [i, m] of ms.entries()) {
+    const p1 = pass1.get(m.key), unreachable = p1 === null, weights = priorityWeights(m.priority);
+    if (p1) take(p1.placements, -1);
+    let r = p1 || null;
+    if (weights.some(x => x > 0)) {
+      step('Using what is left', i, m);
+      const mins = unreachable ? [null, null, null] : effectiveMins(m);
+      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001), opts(weights, mins));
+      if (stopped) return;
+      if (r2.found) r = r2;
+    }
+    if (r) take(r.placements, 1);
+    results.push({ m, r, unreachable });
+  }
+  plan = { results, avail, types: typesFor(ms[0], 0) };
+  // Keep a compact copy for overlay.html.
+  const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r));
+  S.lastPlan = { at: Date.now(), pool: S.pool.map(g => ({ name: g.name, node: !!g.node })),
+    machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
+      totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, sources: sources.get(m.key) || [] })) };
+  save();
+  $('#status').textContent = `Planned ${ms.length} machine(s).`;
+  $('#solve').disabled = false; $('#stop').disabled = true; worker = null;
+  renderResults();
+}
+
+async function importSave(file) {
+  if (!file) return;
+  let data;
+  try { data = readSave(await file.text(), GAME); } catch (err) { alert('Could not read that save: ' + err.message); return; }
+  if (!data.machines.length && !data.modules.length) { alert('Nothing found. Pick save_0.es3.'); return; }
+  if (S.machines.length && !confirm('Replace the current machines and module pool with the ones from this save?')) return;
+  S.pool = data.modules;
+  S.machines = data.machines.map(x => {
+    const g = GAME.machines[x.gameIndex];
+    const m = newMachine(x.gameIndex, { uid: x.uid, name: x.name, stage: x.stage, current: { totals: x.totals, job: x.job, installed: x.installed } });
+    // Default targets: keep what the machine does now, for the stats that matter on it
+    // (Performance/Quality; Efficiency only lowers power use, so it is left free).
+    const matters = k => g.presets.some(p => p.weights[k] > 0 || p.mins[k] !== null);
+    m.mins = [0, null, 2].map(k => (k !== null && matters(k) && x.totals[k] > 0 ? x.totals[k] : null));
+    // A running job becomes the default deadline (the whole job at today's pace); once it is met, move on.
+    if (x.job && g.progress && x.job.target > x.job.current) {
+      m.job = { work: x.job.target, nights: GAME.nightsFor(g, x.totals[0], x.job.target) };
+      m.priority = [null, null, null];
+    }
+    return m;
+  });
+  plan = null; render();
+  $('#status').textContent = `Imported ${data.machines.length} machines and ${data.modules.reduce((s, g) => s + g.count, 0)} modules/nodes.`;
+}
+
+document.addEventListener('click', e => {
+  const d = e.target.dataset, id = e.target.id;
+  if (id === 'importSave') $('#saveFile').click();
+  else if (id === 'addMachine') {
+    const gi = +$('#newType').value, n = S.machines.filter(m => m.gameIndex === gi).length + 1;
+    S.machines.push(newMachine(gi, { name: `${GAME.machines[gi].name} (new ${n})` }));
+    plan = null; render();
+  }
+  else if (id === 'solve') planAll();
+  else if (id === 'openOverlay') window.open('overlay.html', 'LayoutOverlay', 'popup,width=460,height=820');
+  else if (id === 'stop') {
+    stopped = true; if (worker) worker.terminate();
+    $('#status').textContent = 'Stopped.'; $('#solve').disabled = false; $('#stop').disabled = true;
+  }
+  else if (d.act) {
+    const i = S.machines.findIndex(m => m.key === d.k);
+    if (d.act === 'remove') S.machines.splice(i, 1);
+    else { const j = d.act === 'up' ? i - 1 : i + 1; [S.machines[i], S.machines[j]] = [S.machines[j], S.machines[i]]; }
+    plan = null; render();
+  }
+});
+
+document.addEventListener('change', e => {
+  const t = e.target, d = t.dataset;
+  if (t.id === 'saveFile') { importSave(t.files[0]); t.value = ''; return; }
+  if (t.id === 'seconds') { S.seconds = Math.max(1, +t.value || 6); save(); return; }
+  if (t.id === 'flip') { S.flip = t.checked; save(); return; }
+  const m = S.machines.find(x => x.key === d.k);
+  if (!m) return;
+  const num = () => (t.value === '' ? null : parseInt(t.value, 10));
+  const f = d.f;
+  if (f === 'include') m.include = t.checked;
+  else if (f === 'stage') m.stage = +t.value;
+  else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));
+  else if (f.startsWith('min')) m.mins[+f.slice(3)] = num();
+  else if (f.startsWith('prio')) m.priority[+f.slice(4)] = t.value === '' ? null : +t.value;
+  else if (f === 'jobPick') m.job = t.value === '' ? m.job : { work: +t.value, nights: m.job?.nights ?? null };
+  else if (f === 'jobWork') m.job = { ...(m.job || {}), work: num() };
+  else if (f === 'jobNights') m.job = { ...(m.job || {}), nights: num() };
+  plan = null; render();
+});
+
+render();
+</script>
+</body>
+</html>

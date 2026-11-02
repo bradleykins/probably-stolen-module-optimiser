@@ -1,9 +1,8 @@
-// Reads the modules and nodes you own from a Probably Stolen save (save_0.es3).
+// Reads a Probably Stolen save (save_0.es3): the modules and nodes you own, and your machines.
 // The save is Easy Save 3 text. Game items sit inside it as JSON strings, sometimes nested.
-// Returns module entries for the optimiser, identical items grouped with a count.
-function readSaveModules(text, effects) {
-  const items = new Map(); // uniqueId -> item, so an item seen twice counts once
 
+function readSaveItems(text) {
+  const items = new Map(); // uniqueId -> item, so an item seen twice counts once
   function walk(o) {
     if (!o || typeof o !== 'object') return;
     if (typeof o.identifier === 'string' && Array.isArray(o._keys)) items.set(o.uniqueId, o);
@@ -28,33 +27,93 @@ function readSaveModules(text, effects) {
     }
   }
   scan(text);
-
-  const groups = new Map();
-  for (const o of items.values()) {
-    const node = (o.itemTypes || []).includes('NODE');
-    if (!o._keys.includes('IS_OWNED_TAG') || (!node && !o._keys.includes('MODULE_TAG'))) continue;
-    const tag = k => o._values[o._keys.indexOf(k)];
-    const int = k => (o._keys.includes(k) ? tag(k).valueInt : 0);
-    const str = k => (o._keys.includes(k) ? tag(k).internalValueString : '');
-    const sh = o.itemShape, w = sh['<width>k__BackingField'];
-    const cells = sh.data.flatMap((v, i) => (v ? [[Math.floor(i / w), i % w]] : []));
-    const effs = ['MODULE_EFFECT1_TAG', 'MODULE_EFFECT2_TAG'].map(k => effects.find(e => e.id === str(k))).filter(Boolean);
-    const m = node
-      ? { name: o.name, cells, base: [0, 0, 0], count: 0, node: true }
-      : {
-          name: o.name + (effs.length ? ' · ' + effs.map(e => e.name).join(', ') : '') + (o._keys.includes('MODULE_STUCK_TAG') ? ' (stuck in a machine)' : ''),
-          type: str('MODULE_TYPE').replace('MODULE_TYPE_', '').toLowerCase().replace('dna_manipulator', 'dna') || 'universal',
-          cells,
-          // BONUS_* is the module's current base, already including shape, Premium, Learning Algorithm progress, etc.
-          base: ['PERFORMANCE', 'EFFICIENCY', 'QUALITY'].map(s => int(`BONUS_PERCENTAGE_${s}_INT`)),
-          count: 0,
-        };
-    for (const e of effs) if (e.flag) m[e.flag] = true;
-    const key = JSON.stringify(m);
-    if (!groups.has(key)) groups.set(key, m);
-    groups.get(key).count++;
-  }
-  return [...groups.values()].sort((a, b) => !!a.node - !!b.node || a.name.localeCompare(b.name));
+  return [...items.values()];
 }
 
-if (typeof module !== 'undefined') module.exports = readSaveModules;
+const saveTag = (o, k) => o._values[o._keys.indexOf(k)];
+const saveInt = (o, k) => (o._keys.includes(k) ? saveTag(o, k).valueInt : 0);
+const saveStr = (o, k) => (o._keys.includes(k) ? saveTag(o, k).internalValueString : '');
+const isModuleItem = o => (o.itemTypes || []).includes('NODE') || o._keys.includes('MODULE_TAG');
+
+// One module or node item as an optimiser entry (without count).
+function moduleEntry(o, effects) {
+  const sh = o.itemShape, w = sh['<width>k__BackingField'];
+  const cells = sh.data.flatMap((v, i) => (v ? [[Math.floor(i / w), i % w]] : []));
+  if ((o.itemTypes || []).includes('NODE')) return { name: o.name, cells, base: [0, 0, 0], node: true };
+  const effs = ['MODULE_EFFECT1_TAG', 'MODULE_EFFECT2_TAG'].map(k => effects.find(e => e.id === saveStr(o, k))).filter(Boolean);
+  const m = {
+    name: o.name + (effs.length ? ' · ' + effs.map(e => e.name).join(', ') : '') + (o._keys.includes('MODULE_STUCK_TAG') ? ' (stuck in a machine)' : ''),
+    type: saveStr(o, 'MODULE_TYPE').replace('MODULE_TYPE_', '').toLowerCase().replace('dna_manipulator', 'dna') || 'universal',
+    cells,
+    // BONUS_* is the module's current base, already including shape, Premium, Learning Algorithm progress, etc.
+    base: ['PERFORMANCE', 'EFFICIENCY', 'QUALITY'].map(s => saveInt(o, `BONUS_PERCENTAGE_${s}_INT`)),
+  };
+  for (const e of effs) if (e.flag) m[e.flag] = true;
+  return m;
+}
+
+// Bay cell indexes an installed item covers. data is the unrotated shape; orientation/flipped
+// are applied as in the game's GridShape.ForwardTransform, then offset by minX/minY.
+function placedCells(s, cols) {
+  const w = s['<width>k__BackingField'], h = s.data.length / w, o = s['<orientation>k__BackingField'] % 4;
+  const x0 = s['<minX>k__BackingField'], y0 = s['<minY>k__BackingField'], out = [];
+  s.data.forEach((v, i) => {
+    if (!v) return;
+    let lx = i % w, ly = Math.floor(i / w);
+    if (s['<flipped>k__BackingField']) lx = w - 1 - lx;
+    const [x, y] = o === 1 ? [ly, w - 1 - lx] : o === 2 ? [w - 1 - lx, h - 1 - ly] : o === 3 ? [h - 1 - ly, lx] : [lx, ly];
+    out.push((y0 + y) * cols + x0 + x);
+  });
+  return out;
+}
+
+// Returns {modules, machines}.
+// modules: owned modules and nodes, identical ones grouped: {...entry, count, where: {machineUid: n}}.
+// machines: those GAME knows: {uid, gameIndex, name, stage, totals, job, installed: [{module, cells}]}.
+function readSave(text, GAME) {
+  const items = readSaveItems(text);
+  const byUuid = new Map(items.map(o => [o.uuid, o]));
+
+  const machines = [], placeOf = new Map(); // module uniqueId -> machine uid
+  for (const o of items) {
+    const gameIndex = GAME.machines.findIndex(m => m.id === o.identifier);
+    if (gameIndex < 0 || !o._keys.includes('IS_OWNED_TAG') && !o._keys.includes('IMPORTANT_TAG')) continue;
+    const gm = GAME.machines[gameIndex];
+    const cols = GAME.bays[gm.bay][0].layout[0].length;
+    // Machine windows list power first, then the module bay: bay items have inventory index 3.
+    // (The 3D Printer keeps spare modules in its chip storage, index 4; those are not installed.)
+    const bayItems = (o.childItems || []).filter((u, i) => (o.childItemInventoryNode || [])[i] === 3);
+    const installed = bayItems.map(u => byUuid.get(u)).filter(c => c && isModuleItem(c)).map(c => {
+      placeOf.set(c.uniqueId, o.uniqueId);
+      return { module: moduleEntry(c, GAME.effects), cells: placedCells(c.itemModifiedShape, cols) };
+    });
+    const job = o._keys.includes('MACHINE_PROGRESS_TARGET_TAG') && saveStr(o, 'MACHINE_STATE_TAG') === 'STATE_WORKING'
+      ? { current: saveInt(o, 'MACHINE_PROGRESS_CURRENT_TAG'), target: saveInt(o, 'MACHINE_PROGRESS_TARGET_TAG'), label: saveStr(o, 'DESEQUENCER_TARGET_ID_TAG').replace(/_/g, ' ') }
+      : null;
+    machines.push({
+      uid: o.uniqueId, gameIndex, name: `${o.name} #${o.uniqueId}`,
+      stage: Math.min(saveInt(o, 'MODULE_UPGRADE_STAGE_INT'), GAME.bays[gm.bay].length - 1),
+      totals: ['PERFORMANCE', 'POWER', 'QUALITY'].map(s => saveInt(o, `TOTAL_PERCENTAGE_${s}_BONUS_INT`)),
+      job, installed,
+    });
+  }
+
+  const groups = new Map();
+  for (const o of items) {
+    if (!o._keys.includes('IS_OWNED_TAG') || !isModuleItem(o)) continue;
+    const m = moduleEntry(o, GAME.effects), key = JSON.stringify(m);
+    if (!groups.has(key)) groups.set(key, { ...m, count: 0, where: {} });
+    const g = groups.get(key), at = placeOf.get(o.uniqueId) || 0;
+    g.count++;
+    g.where[at] = (g.where[at] || 0) + 1;
+  }
+  const modules = [...groups.values()].sort((a, b) => !!a.node - !!b.node || a.name.localeCompare(b.name));
+  return { modules, machines };
+}
+
+// Modules only, for the single-machine page.
+function readSaveModules(text, effects) {
+  return readSave(text, { machines: [], bays: {}, effects }).modules.map(({ where, ...m }) => m);
+}
+
+if (typeof module !== 'undefined') module.exports = { readSave, readSaveModules };

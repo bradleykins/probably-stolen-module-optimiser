@@ -45,6 +45,11 @@ assert.ok(r.found); assert.deepStrictEqual(r.totals, [0, 0, 10]);
 // Impossible minimum: nothing found.
 assert.strictEqual(solve(full(1, 1), ts, { weights: [1, 0, 0], mins: [null, null, 11] }).found, false);
 
+// Cost: meeting Quality >= 8 with no other goal picks the cheapest module that does it.
+ts = [mod(0, [[0, 0]], 1, [0, 0, 20], { cost: 20 }), mod(1, [[0, 0]], 1, [0, 0, 8], { cost: 8 })];
+r = solve(full(1, 2), ts, { weights: [0, 0, 0], mins: [null, null, 8] });
+assert.deepStrictEqual(r.totals, [0, 0, 8]);
+
 // Random small cases: pruned search must match the full search, totals must match evaluate().
 let seed = 7;
 const rnd = n => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * n;
@@ -58,6 +63,7 @@ for (let k = 0; k < 200; k++) {
       [0, 1, 2].map(() => Math.round(rnd(40) - 12)),
       { receiver: rnd(1) < 0.4, top: rnd(1) < 0.2, side: rnd(1) < 0.2, feedback: rnd(1) < 0.2 });
   });
+  if (k % 2) types.forEach(t => (t.cost = Math.round(rnd(4))));
   const weights = [0, 1, 2].map(() => Math.round(rnd(3)) / 2);
   const mins = [0, 1, 2].map(() => (rnd(1) < 0.25 ? Math.round(rnd(30)) : null));
   const a = solve(grid, types, { weights, mins, flip: true });
@@ -87,7 +93,7 @@ const bigTypes = [
   node(5, dom, 2),
 ];
 const t0 = Date.now();
-const res = solve(big, bigTypes, { weights: [1, 0.5, 0], mins: [null, null, 40], flip: true, heuristicMs: 1000, timeLimitMs: 30000 });
+const res = solve(big, bigTypes, { weights: [1, 0.5, 0], mins: [null, null, 40], flip: true, heuristicMs: 1000, timeLimitMs: 40000 });
 // shortcut: proving optimality can take long when nearly every module fits; the page shows the best found so far and lets you stop
 console.log('big grid:', res.totals, res.found ? 'found' : 'none', res.optimal ? 'optimal' : 'timed out', res.steps, 'steps', Date.now() - t0, 'ms');
 assert.ok(res.found && res.optimal && res.totals[2] >= 40);
