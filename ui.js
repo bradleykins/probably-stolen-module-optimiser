@@ -8,6 +8,25 @@ const fmt = v => (v > 0 ? '+' : '') + v;
 const cellsOf = rows => rows.flatMap((row, r) => [...row].flatMap((ch, c) => (ch === '#' ? [[r, c]] : [])));
 const gridOf = layout => ({ rows: layout.length, cols: layout[0].length, usable: layout.join('').split('').map(ch => ch === '.') });
 
+// Shape name for a module's cells, in any rotation or mirror: the game's variant names, else a size.
+// Needs game-data.js and solver.js; without them it just gives the cell count.
+function shapeName(cells) {
+  const fallback = `${cells.length} cell${cells.length === 1 ? '' : 's'}`;
+  if (typeof GAME === 'undefined' || typeof solverModule === 'undefined') return fallback;
+  const { orientations } = solverModule();
+  const keys = new Set(orientations(cells, true, true).map(o => JSON.stringify(o)));
+  const named = [...GAME.variants.basic, ...GAME.variants.advanced].map(v => [v.name.replace(/ \(.*\)$/, ''), cellsOf(v.shape)]);
+  for (const [name, shape] of named) if (keys.has(JSON.stringify(orientations(shape, false, false)[0]))) return `${name} shape`;
+  const rows = new Set(cells.map(c => c[0])).size, cols = new Set(cells.map(c => c[1])).size;
+  return rows * cols === cells.length ? `${Math.max(rows, cols)}×${Math.min(rows, cols)} bar` : fallback;
+}
+
+// "T shape · P+19" style summary to find a module in the game: its shape and its non-zero base stats.
+function moduleDetails(m) {
+  const stats = m.node ? 'node (no own stats)' : m.base.map((v, k) => (v ? `${'PEQ'[k]}${fmt(v)}` : '')).filter(Boolean).join(' ') || 'no stats';
+  return `${shapeName(m.cells)} · ${stats}`;
+}
+
 // Priority order [statIndex|null x3] as weights: each rank counts 1000x the next, so a higher-priority
 // stat always wins (stat totals stay well under 1000).
 function priorityWeights(priority) {

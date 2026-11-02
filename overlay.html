@@ -46,7 +46,7 @@ function render() {
   const e = list[pick];
   const items = e.placements.map((p, n) => {
     const m = e.modules[p.id] || { name: '?' };
-    return `<li><span class="swatch" style="background:${color(n + 1)}"></span><b>${m.node ? 'N' : ''}${n + 1}</b> ${esc(m.name)}</li>`;
+    return `<li><span class="swatch" style="background:${color(n + 1)}"></span><b>${m.node ? 'N' : ''}${n + 1}</b> ${esc(m.name)}${m.details ? ` <span class="muted">— ${esc(m.details)}</span>` : ''}</li>`;
   }).join('');
   $('#view').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 40)}
     <div style="margin-top:6px">${STATS.map((s, k) => `${s} ${fmt(e.totals[k])}%`).join(' · ')}</div>

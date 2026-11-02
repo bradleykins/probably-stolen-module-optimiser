@@ -162,7 +162,7 @@ const GAME = {
       presets: [{ label: 'Fastest', mins: [null, null, null], weights: [1, 0.25, 0] }],
     },
     {
-      name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, bay: 'standard', accepts: ['universal', 'dna'], power: 12,
+      name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, jobs: [['Complexity 0', 20], ['Complexity 1', 24], ['Complexity 2', 28], ['Complexity 3', 32], ['Complexity 4', 36], ['Complexity 5', 40], ['Complexity 6', 44]], bay: 'standard', accepts: ['universal', 'dna'], power: 12,
       stats: 'Success chance = 95% − 5% × complexity + Quality/2. Performance/2 speeds progress (base 10).',
       readout: (P, E, Q) => [`Success chance bonus: ${pct(trunc(Q / 2))}`, `Progress per cycle: ${speed(10, P, 2)}`, `Power: ${powerUse(12, E)} per cycle`],
       presets: [
@@ -172,7 +172,7 @@ const GAME = {
       ],
     },
     {
-      name: 'Hydroponic System', id: 'hydroponic', progress: { base: 8, ratio: 2 }, bay: 'standard', accepts: ['universal', 'hydroponic'], power: 8,
+      name: 'Hydroponic System', id: 'hydroponic', progress: { base: 8, ratio: 2 }, jobs: [['Fillerweed', 11], ['Hydroreed', 18], ['Bloomberry', 18], ['Coffee', 21], ['Nutrifruit', 23], ['Dream Cap', 28], ['Kotton', 32]], bay: 'standard', accepts: ['universal', 'hydroponic'], power: 8,
       stats: 'Quality/2 = % more harvest. Performance/2 speeds growth (base 8 per cycle).',
       readout: (P, E, Q) => [`Harvest: ${pct(trunc(Q / 2))}`, `Growth per cycle: ${speed(8, P, 2)}`, `Power: ${powerUse(8, E)} per cycle`],
       presets: [
@@ -182,7 +182,7 @@ const GAME = {
       ],
     },
     {
-      name: '3D Printer', id: 'printer', progress: { base: 24 }, bay: 'standard', accepts: ['universal', 'printer'], power: 8,
+      name: '3D Printer', id: 'printer', progress: { base: 24 }, jobs: [['Small Plastic Bottle x6', 10], ['Improved Internal Springs x4', 20], ['Makeshift RDS x4', 20], ['Toy Laser Pointer x4', 20], ['RDS x2', 24], ['Laser Sight x2', 24], ['Silencer x2', 24], ['.22 Mag x2', 24], ['Gun Part x3', 30], ['Box Cutter x3', 34], ['.22 Mag High x2', 36], ['10mm Mag x2', 36], ['.22 Mag Ext x2', 48], ['10mm Mag High', 48], ['.22 Pistol', 50], ['.22 Pistol x2', 60], ['10mm Mag Ext', 60], ['Nestfire Compact Frame', 60], ['Kitchen Knife x4', 64], ['Ironcraft 10 Frame', 70], ['Hatchet x4', 75], ['Meat Cleaver x4', 82], ['Combat Knife x5', 98], ['Combat Machete x3', 120]], bay: 'standard', accepts: ['universal', 'printer'], power: 8,
       stats: 'Quality/4 = print quality (melee condition roll 20-30 + Quality/4: Good at 60, Excellent at 90). Performance = progress (base 24).',
       readout: (P, E, Q) => {
         const q = trunc(Q / 4);

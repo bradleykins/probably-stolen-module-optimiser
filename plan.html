@@ -77,6 +77,12 @@ function newMachine(gameIndex, extra = {}) {
     mins: [null, null, null], priority: t.priority, job: null, ...extra };
 }
 
+// The preset dropdown shows a preset when the machine's minimums and priorities are exactly that preset's.
+function presetMatches(m, p) {
+  const t = presetTarget(p);
+  return JSON.stringify(t.mins) === JSON.stringify(m.mins) && JSON.stringify(t.priority) === JSON.stringify(m.priority);
+}
+
 // Minimums including the job deadline (a job needs a Performance level).
 function effectiveMins(m) {
   const mins = m.mins.slice();
@@ -126,9 +132,10 @@ function renderMachines() {
         <button data-k="${m.key}" data-act="remove">Remove</button>
       </div>
       ${currentHtml(m)}
+      <div class="${m.userTarget ? 'ok' : 'muted'}" style="font-size:12px">${m.userTarget ? 'Your target: planned before default targets, in rank order.' : 'Default target: keep what it does now. Change it to make it yours.'}</div>
       <div class="row stack" style="margin:6px 0 0">
         <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
-        <label>Preset<select data-k="${m.key}" data-f="preset"><option value="">Custom</option>${g.presets.map((p, j) => `<option value="${j}">${esc(p.label)}</option>`).join('')}</select></label>
+        <label>Preset<select data-k="${m.key}" data-f="preset"><option value="">Custom</option>${g.presets.map((p, j) => `<option value="${j}" ${presetMatches(m, p) ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
         ${STATS.map((s, k) => `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`).join('')}
       </div>
       ${jobHtml(m)}
@@ -171,7 +178,7 @@ function sourcesFor(results) {
       need = takeFrom(+id, need, 0, from);
       for (const where of Object.keys(stock[id])) if (need > 0 && where !== '0') need = takeFrom(+id, need, where, from);
       const text = from.map(([where, k]) => (String(where) === String(m.uid) ? `${k} already here` : where == 0 ? `${k} loose` : `${k} from ${machineName(where)}`)).join(', ');
-      lines.push(`${esc(S.pool[id].name)} ×${n}${text ? ` <span class="muted">(${esc(text)})</span>` : ''}`);
+      lines.push(`${esc(S.pool[id].name)} ×${n} <span class="muted">— ${esc(moduleDetails(S.pool[id]))}${text ? `; ${esc(text)}` : ''}</span>`);
     }
     out.set(m.key, lines);
   }
@@ -191,7 +198,9 @@ function renderResults() {
     const job = m.job?.work > 0 && g.progress ? `<div>Job of ${m.job.work} work: ${GAME.nightsFor(g, totals[0], m.job.work)} night(s) at ${GAME.speedOf(g, totals[0])}/night${m.job.nights ? ` (target ≤ ${m.job.nights})` : ''}</div>` : '';
     return `<div class="mcard">
       <h4>${esc(m.name)}</h4>
-      ${unreachable ? '<p class="bad">Target not reachable with the modules left at its turn; maximised its priorities instead.</p>' : ''}
+      ${!unreachable ? '' : m.userTarget
+        ? '<p class="bad">Your target is not reachable with the modules left after the higher-ranked targets you set; maximised its priorities instead. Rank it higher to put it first.</p>'
+        : '<p class="warn">Default target (keep what it does now) not reachable once your targets took their modules; maximised its priorities instead.</p>'}
       <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, S.pool)}</figure>
         <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         <b>Modules</b><ul class="plain">${(sources.get(m.key) || []).map(l => `<li>${l}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
@@ -199,7 +208,7 @@ function renderResults() {
     </div>`;
   }).join('');
   const left = S.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
-  $('#results').innerHTML = cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n}</li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
+  $('#results').innerHTML = cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li>${esc(g.name)} ×${n} <span class="muted">— ${esc(moduleDetails(g))}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
 }
 
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
@@ -219,8 +228,10 @@ async function planAll() {
   const step = (pass, i, m) => ($('#status').textContent = `${pass} — ${i + 1}/${ms.length}: ${m.name}…`);
   const pass1 = new Map(), results = [];
 
-  // Pass 1: meet each target, in priority order, with the cheapest modules that do it.
-  for (const [i, m] of ms.entries()) {
+  // Pass 1: meet each target with the cheapest modules that do it. Targets you set go first (in rank
+  // order), then the imported "keep what it does now" defaults, so a default never blocks your choice.
+  const targetOrder = [...ms.filter(m => m.userTarget), ...ms.filter(m => !m.userTarget)];
+  for (const [i, m] of targetOrder.entries()) {
     const mins = effectiveMins(m);
     if (mins.every(v => v === null)) continue;
     step('Meeting targets', i, m);
@@ -246,7 +257,7 @@ async function planAll() {
   plan = { results, avail, types: typesFor(ms[0], 0) };
   // Keep a compact copy for overlay.html.
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r));
-  S.lastPlan = { at: Date.now(), pool: S.pool.map(g => ({ name: g.name, node: !!g.node })),
+  S.lastPlan = { at: Date.now(), pool: S.pool.map(g => ({ name: g.name, node: !!g.node, details: moduleDetails(g) })),
     machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
       totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, sources: sources.get(m.key) || [] })) };
   save();
@@ -311,6 +322,8 @@ document.addEventListener('change', e => {
   if (!m) return;
   const num = () => (t.value === '' ? null : parseInt(t.value, 10));
   const f = d.f;
+  // Any change to minimums, preset or job makes this machine's target yours (planned before defaults).
+  if (f === 'preset' || f.startsWith('min') || f.startsWith('job')) m.userTarget = true;
   if (f === 'include') m.include = t.checked;
   else if (f === 'stage') m.stage = +t.value;
   else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));
