@@ -49,7 +49,7 @@ nav a { color: var(--accent); }
     <h2>2. Plan</h2>
     <div class="row">
       <button class="primary" id="solve">Plan all machines</button><button id="stop" disabled>Stop</button>
-      <button id="openOverlay" title="Small window to keep over the game. With overlay.ahk running, Ctrl+Alt+O shows/hides it.">Open overlay</button>
+      <button id="openOverlay" title="Small always-on-top window to keep over the game (Chrome or Edge; run the game windowed or borderless). Keep this tab open: the overlay closes with it.">Open overlay</button>
       <label class="muted">Seconds per machine <input type="number" id="seconds" min="1" max="120"></label>
       <label><input type="checkbox" id="flip"> Allow mirroring</label>
     </div>
@@ -339,7 +339,7 @@ document.addEventListener('click', e => {
     plan = null; render();
   }
   else if (id === 'solve') planAll();
-  else if (id === 'openOverlay') window.open('overlay.html', 'LayoutOverlay', 'popup,width=460,height=820');
+  else if (id === 'openOverlay') showOverlay();
   else if (id === 'stop') {
     stopped = true; if (worker) worker.terminate();
     $('#status').textContent = 'Stopped.'; $('#solve').disabled = false; $('#stop').disabled = true;

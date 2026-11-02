@@ -123,11 +123,20 @@ const GAME = {
     },
     {
       name: 'Furnace', id: 'furnace', bay: 'standard', accepts: ['universal', 'furnace'], power: 8,
-      stats: 'Quality: +1 ingot per batch for every 100 (raw total; Blast module takes 1 off). Performance has no effect.',
-      readout: (P, E, Q) => [`Extra ingots per batch: ${Math.max(0, trunc(Q / 100))}`, `Power: ${powerUse(8, E)} per cycle`],
+      // MachineFurnace + IngotPurityHelper.SetPurityFromInput: always 1 ingot per 2 inputs (Blast: 2 per 3).
+      // Purity = Low + (2 × ore / inputs) + trunc(Quality / 100), Blast −1, Flux at least +1; clamped Very Low..Perfect.
+      stats: 'Quality: +1 ingot purity grade for every 100 (Blast module takes 1 off). It does not add ingots: always 1 ingot per 2 inputs, or 2 per 3 with Blast. Performance has no effect.',
+      readout: (P, E, Q) => {
+        const b = trunc(Q / 100);
+        return [`Purity bonus: ${b >= 0 ? '+' : ''}${b} grade${Math.abs(b) === 1 ? '' : 's'} (without Blast)`,
+          `Ingot purity: scrap only ${GAME.ingotPurity(b)}, half ore ${GAME.ingotPurity(b + 1)}, ore only ${GAME.ingotPurity(b + 2)}`,
+          `Power: ${powerUse(8, E)} per cycle`];
+      },
       presets: [
-        { label: '+2 ingots (Quality ≥ 200)', mins: [null, null, 200], weights: [0, 1, 0] },
-        { label: '+1 ingot (Quality ≥ 100)', mins: [null, null, 100], weights: [0, 1, 0] },
+        { label: '+1 purity grade (Quality ≥ 100)', mins: [null, null, 100], weights: [0, 1, 0] },
+        { label: '+2 purity grades, Perfect from ore (Quality ≥ 200)', mins: [null, null, 200], weights: [0, 1, 0] },
+        { label: '+3 purity grades (Quality ≥ 300)', mins: [null, null, 300], weights: [0, 1, 0] },
+        { label: 'Perfect from scrap (Quality ≥ 400)', mins: [null, null, 400], weights: [0, 1, 0] },
         { label: 'Highest Quality', mins: [null, null, null], weights: [0, 0.1, 1] },
       ],
     },
@@ -202,6 +211,13 @@ const GAME = {
     },
   ],
   notOptimised: 'Blender, Heating Plate and Chem Finisher only take the Chemical Equipment Module, which has no stats.',
+};
+
+// Furnace ingot purity, `grades` steps above Low (IngotPurityHelper), with its sell value change.
+GAME.ingotPurity = grades => {
+  const P = [['Very Low', -25], ['Low', -15], ['Fair', 0], ['High', 25], ['Very High', 50], ['Perfect', 200]];
+  const [name, v] = P[Math.max(0, Math.min(P.length - 1, 1 + grades))];
+  return `${name} (${v > 0 ? '+' : ''}${v}% value)`;
 };
 
 // Progress machines run once per night. Work done per night at a Performance total, and the

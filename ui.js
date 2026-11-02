@@ -66,6 +66,18 @@ function boardHtml(layout, placements, modules, cellSize = 30) {
   return html + '</div>';
 }
 
+// The overlay window. Chrome/Edge: a Document Picture-in-Picture window, which the browser keeps on top
+// of every other window (the game too, in windowed or borderless mode). It closes with this tab.
+// Elsewhere: a plain popup, which only stays on top with overlay.ahk.
+async function showOverlay() {
+  const url = new URL('overlay.html', location.href).href;
+  if (!window.documentPictureInPicture) { window.open(url, 'LayoutOverlay', 'popup,width=460,height=820'); return; }
+  const pip = await documentPictureInPicture.requestWindow({ width: 460, height: 820 });
+  pip.document.title = 'Layout Overlay';
+  pip.document.body.style.margin = '0';
+  pip.document.body.innerHTML = `<iframe src="${url}" style="border:0;width:100vw;height:100vh;display:block"></iframe>`;
+}
+
 // Runs the solver in a Web Worker so the page stays responsive; falls back to running it here.
 function startSolver(job, onImprove, onDone) {
   const inPage = () => setTimeout(() => onDone(solverModule().solve(job.grid, job.types, job.opts)), 20);
