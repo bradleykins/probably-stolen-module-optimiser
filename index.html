@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Module Layout Optimiser</title>
+<style>
+:root { --bg:#15171a; --panel:#1f2226; --line:#363a40; --text:#e6e6e6; --muted:#9aa0a6; --cell:#2c3036; --accent:#5fbf6a; --warn:#e0a84f; --bad:#e06c6c; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+header { max-width: 1280px; margin: 0 auto; padding: 16px 16px 0; }
+h1 { margin: 0; font-size: 18px; }
+header p { margin: 4px 0 0; color: var(--muted); }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); align-items: start; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+h2 { margin: 0 0 8px; font-size: 15px; }
+h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+input, button, select { font: inherit; color: var(--text); background: var(--cell); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+select { max-width: 100%; }
+input[type=number] { width: 64px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on, button.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.stack label { display: inline-flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.grid { display: inline-grid; gap: 2px; }
+.grid div { width: 30px; height: 30px; background: var(--cell); border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; color: #080a0c; position:relative; }
+.grid div.part { outline: 2px solid rgba(255,255,255,.82); outline-offset: -2px; }
+.grid div.part.origin::after { content:'•'; position:absolute; top:0; left:2px; font-size:9px; line-height:9px; color:#fff; text-shadow:0 1px 2px #000; }
+.component-list { display:grid; gap:5px; margin-top:8px; }
+.component-row { display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid var(--line); border-left:4px solid var(--component-color); border-radius:4px; }
+.component-row.done { opacity:.62; background:#202a24; }
+.component-row.done .component-name { text-decoration:line-through; }
+.component-row label { display:flex; align-items:center; gap:6px; flex:1; cursor:pointer; }
+.component-row input { accent-color:var(--accent); }
+.delete-layout { border-color:var(--bad); color:#ffb5b5; }
+.layout-actions { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+.progress { color:var(--muted); font-size:12px; }
+.grid div.x { background: transparent; }
+.grid.shape div { width: 18px; height: 18px; cursor: pointer; }
+.grid.shape div.on { background: var(--accent); }
+.grid.shape.fixed div { cursor: default; }
+.grid.shape.fixed div.on { background: #d9b46a; }
+.mod { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.mod.off { opacity: .45; }
+.mod .fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.flags label { font-size: 12px; color: var(--muted); }
+.muted { color: var(--muted); font-size: 12px; }
+.ok { color: var(--accent); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+table { border-collapse: collapse; margin-top: 8px; }
+td { padding: 2px 10px 2px 0; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Module Layout Optimiser</h1>
+  <p>Pick the machine and what you want from it, list the modules you own, then press Solve.</p>
+</header>
+<main>
+  <section>
+    <h2>1. Machine and target</h2>
+    <div class="row"><select id="machine" aria-label="Machine"></select></div>
+    <p class="hint" id="machineStats"></p>
+    <div class="row" id="stages"></div>
+    <h3>Target</h3>
+    <div class="row"><select id="preset" aria-label="Target preset"></select></div>
+    <div class="row stack" id="mins"></div>
+    <h3>Then maximise, in this order</h3>
+    <p class="hint">After the minimums are met, the 1st stat is made as high as possible; ties are settled by the 2nd, then the 3rd.</p>
+    <div class="row stack" id="priority"></div>
+    <div class="row">
+      <label><input type="checkbox" id="rotate"> Allow rotation</label>
+      <label><input type="checkbox" id="flip"> Allow mirroring</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Modules you own</h2>
+    <div class="row"><button class="primary" id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden></div>
+    <p class="hint">Loads every module and node you own, with their exact stats, shapes and effects. Pick <code>save_0.es3</code> in
+      <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen</code> (paste that into the file dialog's address bar).</p>
+    <h3>Or add by hand</h3>
+    <p class="hint">Pick a module from the game, its shape and its effects, then Add. Stats fill in from the game data; edit them if yours differ (use the tooltip's Base value).</p>
+    <div class="row">
+      <select id="catModule" aria-label="Module"></select>
+      <select id="catVariant" aria-label="Shape"></select>
+    </div>
+    <div class="row">
+      <select id="catEffect1" aria-label="Effect 1"></select>
+      <select id="catEffect2" aria-label="Effect 2"></select>
+      <button class="primary" id="addCat">Add</button>
+    </div>
+    <div class="row">
+      <select id="nodeKind" aria-label="Node size"></select>
+      <button id="addNode">Add node</button>
+      <button id="addCustom">Add custom module</button>
+    </div>
+    <div id="mods"></div>
+  </section>
+
+  <section>
+    <h2>3. Best layout</h2>
+    <div class="row"><button class="primary" id="solve">Solve</button><button id="stop" disabled>Stop</button><button id="saveLayout" disabled>Save layout & consume modules</button><span id="status" class="muted"></span></div>
+    <div id="result"></div>
+    <h3>Saved machine layouts</h3>
+    <p class="hint">Committed layouts are stored in this browser. Their modules have already been deducted from the shared pool.</p>
+    <div id="savedLayouts"></div>
+  </section>
+</main>
+<script src="game-data.js"></script>
+<script src="solver.js"></script>
+<script src="savegame.js"></script>
+<script>
+const KEY = 'ps-module-optimiser-v3';
+const STATS = ['Performance', 'Efficiency', 'Quality'];
+const FLAGS = [['receiver', 'Receiver'], ['top', 'Top Mount'], ['side', 'Side Mount'], ['feedback', 'Negative Feedback']];
+const { evaluate } = solverModule();
+
+const cellsOf = rows => rows.flatMap((row, r) => [...row].flatMap((ch, c) => (ch === '#' ? [[r, c]] : [])));
+const gridOf = layout => ({ rows: layout.length, cols: layout[0].length, usable: layout.join('').split('').map(ch => ch === '.') });
+
+const DEFAULT = { machine: 0, stage: 0, preset: 0, mins: [null, null, 200], priority: [0, 1, null], rotate: true, flip: true, modules: [], savedLayouts: [] };
+let S;
+try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
+let result = null, worker = null;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const color = i => `hsl(${(i * 67) % 360} 60% 58%)`;
+const fmt = v => (v > 0 ? '+' : '') + v;
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const machine = () => GAME.machines[S.machine];
+const bays = () => GAME.bays[machine().bay];
+const accepted = m => m.node || machine().accepts.includes(m.type || 'universal');
+
+function applyPreset() {
+  const p = machine().presets[S.preset] || machine().presets[0];
+  S.mins = p.mins.slice();
+  const order = [0, 1, 2].filter(k => p.weights[k] > 0).sort((a, b) => p.weights[b] - p.weights[a]);
+  S.priority = [0, 1, 2].map(r => order[r] ?? null);
+}
+
+// Priority order as weights: each rank counts 1000x the next, so a higher-priority stat always wins
+// (stat totals stay well under 1000).
+function weightsOf() {
+  const w = [0, 0, 0];
+  S.priority.forEach((k, r) => { if (k !== null && w[k] === 0) w[k] = 1000 ** (2 - r); });
+  return w;
+}
+
+// Base stats as the game computes them: shape variant first, then each effect, truncating each time.
+function catalogStats() {
+  const cat = GAME.modules[$('#catModule').value];
+  const variant = cat.variants ? GAME.variants[cat.variants][$('#catVariant').value] : null;
+  const effects = [$('#catEffect1').value, $('#catEffect2').value].filter(v => v !== '').map(i => GAME.effects[i]);
+  let base = cat.base.slice();
+  for (const mult of [variant ? variant.mult : 1, ...effects.map(e => e.mult || 1)]) base = base.map(b => Math.trunc(b * mult));
+  const m = { name: cat.name + (variant && variant.mult !== 1 ? ` (${variant.name})` : ''), type: cat.type, cells: cellsOf(variant ? variant.shape : cat.shape), base, count: 1 };
+  for (const e of effects) if (e.flag) m[e.flag] = true;
+  if (effects.length) m.name += ' · ' + effects.map(e => e.name).join(', ');
+  return m;
+}
+
+function shapeHtml(m, i) {
+  const size = Math.max(3, ...m.cells.map(p => Math.max(p[0], p[1]) + 1));
+  let h = `<div class="grid shape${m.node ? ' fixed' : ''}" style="grid-template-columns:repeat(${size},18px)">`;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++)
+    h += `<div ${m.node ? '' : `data-shape="${i},${r},${c}"`} class="${m.cells.some(p => p[0] === r && p[1] === c) ? 'on' : ''}"></div>`;
+  return h + '</div>';
+}
+
+function boardHtml(layout, placements, modules, cellSize = 30) {
+  const cols = layout[0].length, rows = layout.length;
+  const owner = {};
+  placements.forEach((p, n) => p.cells.forEach((cell, part) => owner[cell] = { n, part, id: p.id }));
+  const getOwner = (r, c) => r < 0 || c < 0 || r >= rows || c >= cols ? null : owner[r * cols + c];
+  let html = `<div class="grid" style="grid-template-columns:repeat(${cols},${cellSize}px)">`;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const cell = r * cols + c, here = owner[cell];
+    if (layout[r][c] === '#') { html += '<div class="x"></div>'; continue; }
+    if (!here) { html += '<div></div>'; continue; }
+    const m = modules[here.id], p = placements[here.n];
+    const sides = [[-1,0,'top'],[0,1,'right'],[1,0,'bottom'],[0,-1,'left']];
+    const borders = sides.map(([dr,dc,side]) => {
+      const other = getOwner(r + dr, c + dc);
+      return `border-${side}:${other && other.n === here.n ? '0' : '3px solid rgba(255,255,255,.95)'}`;
+    }).join(';');
+    const origin = p.cells[0] === cell;
+    const label = m.node ? `N${here.n + 1}` : `${here.n + 1}`;
+    html += `<div class="part${origin ? ' origin' : ''}" style="background:${color(here.n + 1)};${borders}" title="${esc(m.name)} · Component ${here.n + 1} · Cell ${here.part + 1}${origin ? ' · placement origin' : ''}">${label}</div>`;
+  }
+  return html + '</div>';
+}
+
+function renderSavedLayouts() {
+  const host = $('#savedLayouts');
+  if (!S.savedLayouts || !S.savedLayouts.length) {
+    host.innerHTML = '<p class="hint">No layouts saved yet.</p>';
+    return;
+  }
+  host.innerHTML = S.savedLayouts.map((x, i) => {
+    x.inserted = Array.isArray(x.inserted) ? x.inserted : x.placements.map(() => false);
+    const done = x.inserted.filter(Boolean).length;
+    const components = x.placements.map((p, n) => {
+      const m = x.modules[p.id];
+      return `<div class="component-row${x.inserted[n] ? ' done' : ''}" style="--component-color:${color(n + 1)}">
+        <label><input type="checkbox" data-layout="${i}" data-component="${n}" ${x.inserted[n] ? 'checked' : ''}>
+        <span class="component-name"><b>${m.node ? 'Node' : 'Module'} ${n + 1}:</b> ${esc(m.name)}</span></label>
+        <span class="muted">${p.cells.length} cell${p.cells.length === 1 ? '' : 's'}</span>
+      </div>`;
+    }).join('');
+    return `<div class="mod saved-layout">
+      <div class="fields">
+        <div class="layout-actions"><b>${esc(x.machineName)} — ${esc(x.stageName)}</b><button class="delete-layout" data-delete-layout="${i}">Delete layout</button></div>
+        <span class="muted">${new Date(x.savedAt).toLocaleString()} · ${x.placements.length} components</span>
+        ${boardHtml(x.layout, x.placements, x.modules)}
+        <span>${STATS.map((s, k) => `${s}: ${fmt(x.totals[k])}%`).join(' · ')}</span>
+        <div class="layout-actions"><b>Installation checklist</b><span class="progress">${done}/${x.placements.length} installed</span></div>
+        <div class="component-list">${components}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Identifies the same kind of module across the pool, saved layouts and re-imports.
+const signature = m => JSON.stringify([m.name, m.type, m.cells, m.base, m.node, m.receiver, m.top, m.side, m.feedback]);
+
+function restoreLayoutModules(x) {
+  const used = {};
+  x.placements.forEach(p => used[p.id] = (used[p.id] || 0) + 1);
+  for (const [id, count] of Object.entries(used)) {
+    const source = x.modules[+id];
+    if (!source) continue;
+    const key = signature(source);
+    let existing = S.modules.find(m => signature(m) === key);
+    if (existing) existing.count = (existing.count || 0) + count;
+    else S.modules.push({ ...structuredClone(source), count });
+  }
+}
+
+function render() {
+  save();
+  const mc = machine();
+  $('#machine').innerHTML = GAME.machines.map((m, i) => `<option value="${i}" ${i === S.machine ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+  $('#machineStats').textContent = mc.stats;
+  $('#stages').innerHTML = bays().map((b, i) => `<button data-stage="${i}" class="${i === S.stage ? 'on' : ''}">${esc(b.name)}</button>`).join('');
+  $('#preset').innerHTML = mc.presets.map((p, i) => `<option value="${i}" ${i === S.preset ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
+  $('#mins').innerHTML = STATS.map((s, k) => `<label>Min ${s}<input type="number" data-min="${k}" value="${S.mins[k] ?? ''}" placeholder="none"></label>`).join('');
+  $('#priority').innerHTML = ['1st', '2nd', '3rd'].map((label, r) => `<label>${label}<select data-prio="${r}">
+    <option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${S.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('');
+  $('#rotate').checked = S.rotate; $('#flip').checked = S.flip;
+
+  // Catalog pickers: modules this machine accepts first.
+  const sel = $('#catModule').value;
+  const cat = GAME.modules.map((m, i) => ({ m, i })).sort((a, b) => accepted(b.m) - accepted(a.m));
+  $('#catModule').innerHTML = cat.map(({ m, i }) => `<option value="${i}">${esc(m.name)}${accepted(m) ? '' : ' (not for this machine)'}</option>`).join('');
+  if (sel !== '') $('#catModule').value = sel;
+  renderVariants();
+  const effOpts = '<option value="">No effect</option>' + GAME.effects.map((e, i) => `<option value="${i}">${esc(e.name)}</option>`).join('');
+  for (const id of ['#catEffect1', '#catEffect2']) { const v = $(id).value; $(id).innerHTML = effOpts; $(id).value = v; }
+  $('#nodeKind').innerHTML = GAME.nodes.map((n, i) => `<option value="${i}">${esc(n.name)}</option>`).join('');
+
+  $('#mods').innerHTML = S.modules.map((m, i) => `<div class="mod${accepted(m) ? '' : ' off'}" data-m="${i}">${shapeHtml(m, i)}
+    <div class="fields">
+      <div class="row" style="margin:0">
+        <span class="swatch" style="background:${color(i)}"></span>
+        <input data-f="name" value="${esc(m.name)}" aria-label="Name" style="flex:1">
+      </div>
+      ${m.node ? '<span class="muted">Node: no own stats. Gets 20% of the base stats of each module touching it.</span>' : `
+      <div class="row stack" style="margin:0">
+        ${STATS.map((s, k) => `<label>${s}<input type="number" data-s="${k}" value="${m.base[k]}"></label>`).join('')}
+      </div>
+      <div class="row flags" style="margin:0">
+        ${FLAGS.map(([f, label]) => `<label><input type="checkbox" data-f="${f}" ${m[f] ? 'checked' : ''}> ${label}</label>`).join('')}
+      </div>`}
+      <div class="row" style="margin:0">
+        <label class="muted">Count <input type="number" min="0" data-f="count" value="${m.count}"></label>
+        <button data-dup="${i}">Copy</button><button data-del="${i}">Remove</button>
+        ${accepted(m) ? '' : '<span class="warn">Not accepted by this machine</span>'}
+      </div>
+    </div></div>`).join('') || '<p class="hint">No modules yet.</p>';
+  renderResult();
+  renderSavedLayouts();
+}
+
+function renderVariants() {
+  const cat = GAME.modules[$('#catModule').value || 0];
+  const v = $('#catVariant').value;
+  $('#catVariant').innerHTML = cat.variants ? GAME.variants[cat.variants].map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join('') : '<option value="">Fixed shape</option>';
+  $('#catVariant').disabled = !cat.variants;
+  if (cat.variants && v !== '' && v < GAME.variants[cat.variants].length) $('#catVariant').value = v;
+}
+
+function renderResult() {
+  const layout = bays()[S.stage].layout, g = gridOf(layout);
+  const r = result && result.machine === S.machine && result.stage === S.stage ? result : null;
+  const board = r && r.placements.length ? boardHtml(layout, r.placements, r.mods) : (() => {
+    let h = `<div class="grid" style="grid-template-columns:repeat(${g.cols},30px)">`;
+    for (let i = 0; i < g.rows * g.cols; i++) h += g.usable[i] ? '<div></div>' : '<div class="x"></div>';
+    return h + '</div>';
+  })();
+  if (!r || !r.placements.length) { $('#result').innerHTML = board + (r && r.note ? `<p class="${r.noteClass}">${esc(r.note)}</p>` : ''); return; }
+
+  const byId = Object.fromEntries(r.types.map(t => [t.id, t]));
+  const { totals, items } = evaluate(g, r.placements, byId);
+  const mins = r.mins;
+  const tot = STATS.map((s, k) => {
+    const need = mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`;
+    return `<tr><td>${s}</td><td>${fmt(totals[k])}%${need}</td></tr>`;
+  }).join('');
+  const readout = machine().readout(...totals).map(line => `<tr><td colspan="2">${esc(line)}</td></tr>`).join('');
+  const rows = r.placements.map((p, n) => {
+    const m = r.mods[p.id];
+    return `<tr><td><span class="swatch" style="background:${color(n + 1)}"></span>${m.node ? 'N' : ''}${n + 1}. ${esc(m.name)}</td><td>${items[n].map(fmt).join(' / ')}</td></tr>`;
+  }).join('');
+  $('#result').innerHTML = `${board}
+    ${r.note ? `<p class="${r.noteClass}">${esc(r.note)}</p>` : ''}
+    <table><tr><td colspan="2"><b>Totals</b></td></tr>${tot}</table>
+    <table><tr><td colspan="2"><b>${esc(machine().name)}</b></td></tr>${readout}</table>
+    <table><tr><td colspan="2"><b>Placed items</b> <span class="muted">(Performance / Efficiency / Quality, with bonuses)</span></td></tr>${rows}</table>`;
+}
+
+// Runs the solver in a Web Worker so the page stays responsive; falls back to running it here.
+function startSolver(job, onImprove, onDone) {
+  const inPage = () => setTimeout(() => onDone(solverModule().solve(job.grid, job.types, job.opts)), 20);
+  try {
+    const src = `const S = (${solverModule})();
+      onmessage = e => postMessage({ done: S.solve(e.data.grid, e.data.types, { ...e.data.opts, onImprove: x => postMessage({ improve: x }) }) });`;
+    const wk = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    wk.onmessage = e => { if (e.data.done) { wk.terminate(); onDone(e.data.done); } else onImprove(e.data.improve); };
+    wk.onerror = () => { wk.terminate(); inPage(); };
+    wk.postMessage(job);
+    return wk;
+  } catch {
+    inPage();
+    return null;
+  }
+}
+
+function solveNow() {
+  const g = gridOf(bays()[S.stage].layout);
+  const mods = structuredClone(S.modules);
+  const types = mods.map((m, id) => ({ id, cells: m.cells, count: accepted(m) ? m.count : 0, base: m.node ? [0, 0, 0] : m.base,
+    node: !!m.node, receiver: !!m.receiver, top: !!m.top, side: !!m.side, feedback: !!m.feedback }));
+  const opts = { weights: weightsOf(), mins: S.mins.slice(), rotate: S.rotate, flip: S.flip, heuristicMs: 5000, timeLimitMs: 60000 };
+  const base = { machine: S.machine, stage: S.stage, mods, types, mins: opts.mins };
+  const t0 = Date.now();
+  const show = (r, note, noteClass) => { result = { ...base, ...r, note, noteClass }; renderResult(); };
+  const finish = () => { worker = null; $('#solve').disabled = false; $('#stop').disabled = true; $('#saveLayout').disabled = !(result && result.found && result.placements.length); };
+  $('#solve').disabled = true; $('#stop').disabled = false; $('#saveLayout').disabled = true;
+  $('#status').textContent = 'Solving…';
+
+  worker = startSolver({ grid: g, types, opts },
+    r => { show(r); $('#status').textContent = `Solving… best so far after ${((Date.now() - t0) / 1000).toFixed(1)} s`; },
+    r => {
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (r.found) {
+        show(r);
+        $('#status').textContent = r.optimal ? `Best possible layout (${secs} s)` : `Best layout found (${secs} s). Too many combinations to prove nothing beats it.`;
+        return finish();
+      }
+      // Target out of reach: show the layout that gets closest to the minimums.
+      const cons = [0, 1, 2].filter(k => opts.mins[k] !== null);
+      $('#status').textContent = 'Target not reachable. Finding the closest layout…';
+      worker = startSolver({ grid: g, types, opts: { ...opts, mins: [null, null, null], weights: [0, 1, 2].map(k => +cons.includes(k)) } },
+        x => show(x),
+        x => {
+          const gap = cons.map(k => `${STATS[k]} ${x.totals[k]} of ${opts.mins[k]}`).join(', ');
+          show(x, `Target not reachable with these modules. Closest: ${gap}.`, 'bad');
+          $('#status').textContent = x.optimal ? 'Closest possible layout' : 'Closest found before time limit';
+          finish();
+        });
+    });
+}
+
+function saveLayoutAndConsume() {
+  if (!result || !result.found || !result.placements.length) return;
+  const used = {};
+  for (const p of result.placements) used[p.id] = (used[p.id] || 0) + 1;
+
+  // Validate the whole allocation before changing the inventory.
+  for (const [id, n] of Object.entries(used)) {
+    const available = result.mods[+id]?.count || 0;
+    if (n > available) {
+      alert(`Cannot save: ${result.mods[+id]?.name || 'A module'} has only ${available} available, but the layout uses ${n}.`);
+      return;
+    }
+  }
+
+  const bay = bays()[S.stage];
+  const grid = gridOf(bay.layout);
+  const byId = Object.fromEntries(result.types.map(t => [t.id, t]));
+  const evaluated = evaluate(grid, result.placements, byId);
+  S.savedLayouts = S.savedLayouts || [];
+  S.savedLayouts.push({
+    machine: S.machine,
+    machineName: machine().name,
+    stage: S.stage,
+    stageName: bay.name,
+    layout: bay.layout.slice(),
+    placements: structuredClone(result.placements),
+    inserted: result.placements.map(() => false),
+    modules: structuredClone(result.mods),
+    totals: evaluated.totals,
+    savedAt: new Date().toISOString()
+  });
+
+  // The solver's IDs correspond to the inventory entries captured when Solve was pressed.
+  // Consume only the placed quantity; any unused copies remain in the pool.
+  for (const [id, n] of Object.entries(used)) {
+    const m = S.modules[+id];
+    if (m) m.count = Math.max(0, m.count - n);
+  }
+  S.modules = S.modules.filter(m => m.count > 0);
+
+  clearResult();
+  render();
+  $('#status').textContent = 'Layout saved. Used modules have been removed from the available pool.';
+}
+
+function stopNow() {
+  if (worker) worker.terminate();
+  if (result) { result.note = 'Stopped early: this is the best layout found so far.'; result.noteClass = 'warn'; }
+  $('#status').textContent = 'Stopped';
+  worker = null; $('#solve').disabled = false; $('#stop').disabled = true; $('#saveLayout').disabled = !(result && result.found && result.placements.length);
+  renderResult();
+}
+
+const clearResult = () => { result = null; $('#status').textContent = ''; if ($('#saveLayout')) $('#saveLayout').disabled = true; };
+
+async function importSave(file) {
+  if (!file) return;
+  let mods;
+  try { mods = readSaveModules(await file.text(), GAME.effects); } catch (err) { alert('Could not read that save: ' + err.message); return; }
+  if (!mods.length) { alert('No owned modules or nodes found in that file. Pick save_0.es3 (not saves_index.es3 or SaveFile.es3).'); return; }
+  // Modules in saved layouts are still owned in the save; keep them out of the free pool.
+  let reserved = 0, unmatched = 0;
+  for (const x of S.savedLayouts || []) for (const p of x.placements) {
+    const m = mods.find(m => m.count > 0 && signature(m) === signature(x.modules[p.id]));
+    if (m) { m.count--; reserved++; } else unmatched++;
+  }
+  mods = mods.filter(m => m.count > 0);
+  const total = mods.reduce((s, m) => s + m.count, 0);
+  if (S.modules.length && !confirm(`Replace your ${S.modules.length} module entries with the ${total} free items from the save?`)) return;
+  S.modules = mods;
+  clearResult(); render();
+  $('#status').textContent = `Imported ${total} free items (${mods.length} kinds) from ${file.name}` +
+    (reserved ? `; ${reserved} kept aside for saved layouts` : '') +
+    (unmatched ? `; ${unmatched} saved-layout items no longer match the save (stats changed?)` : '');
+}
+
+document.addEventListener('click', e => {
+  const d = e.target.dataset, id = e.target.id;
+  if (d.stage) { S.stage = +d.stage; clearResult(); render(); }
+  else if (d.shape) {
+    const [i, r, c] = d.shape.split(',').map(Number), m = S.modules[i];
+    const k = m.cells.findIndex(p => p[0] === r && p[1] === c);
+    k >= 0 ? m.cells.splice(k, 1) : m.cells.push([r, c]);
+    clearResult(); render();
+  }
+  else if (d.dup) { S.modules.splice(+d.dup + 1, 0, structuredClone(S.modules[d.dup])); clearResult(); render(); }
+  else if (d.del) { S.modules.splice(+d.del, 1); clearResult(); render(); }
+  else if (id === 'addCat') { S.modules.push(catalogStats()); clearResult(); render(); }
+  else if (id === 'addNode') {
+    const n = GAME.nodes[$('#nodeKind').value];
+    S.modules.push({ name: n.name, cells: cellsOf(n.shape), base: [0, 0, 0], count: 1, node: true });
+    clearResult(); render();
+  }
+  else if (id === 'addCustom') {
+    S.modules.push({ name: `Custom module ${S.modules.length + 1}`, type: 'universal', cells: [[1, 1]], base: [0, 0, 0], count: 1 });
+    clearResult(); render();
+  }
+  else if (id === 'importSave') $('#saveFile').click();
+  else if (id === 'solve') solveNow();
+  else if (id === 'stop') stopNow();
+  else if (id === 'saveLayout') saveLayoutAndConsume();
+  else if (d.deleteLayout !== undefined) {
+    const i = +d.deleteLayout, x = S.savedLayouts[i];
+    if (x && confirm(`Delete ${x.machineName} — ${x.stageName}? Its consumed modules will be returned to the available pool.`)) {
+      restoreLayoutModules(x); S.savedLayouts.splice(i, 1); save(); render();
+      $('#status').textContent = 'Layout deleted and its modules returned to the pool.';
+    }
+  }
+});
+
+document.addEventListener('change', e => {
+  const t = e.target, d = t.dataset;
+  if (d.layout !== undefined && d.component !== undefined) {
+    const x = S.savedLayouts[+d.layout];
+    if (x) { x.inserted = Array.isArray(x.inserted) ? x.inserted : x.placements.map(() => false); x.inserted[+d.component] = t.checked; save(); renderSavedLayouts(); }
+    return;
+  }
+  if (t.id === 'machine') { S.machine = +t.value; S.stage = 0; S.preset = 0; applyPreset(); }
+  else if (t.id === 'preset') { S.preset = +t.value; applyPreset(); }
+  else if (t.id === 'catModule') { renderVariants(); return; }
+  else if (['catVariant', 'catEffect1', 'catEffect2', 'nodeKind'].includes(t.id)) return;
+  else if (t.id === 'rotate') S.rotate = t.checked;
+  else if (t.id === 'flip') S.flip = t.checked;
+  else if (d.min) S.mins[d.min] = t.value === '' ? null : parseInt(t.value, 10);
+  else if (d.prio) S.priority[d.prio] = t.value === '' ? null : +t.value;
+  else if (t.id === 'saveFile') { importSave(t.files[0]); t.value = ''; return; }
+  else if (d.s || d.f) {
+    const m = S.modules[t.closest('.mod').dataset.m];
+    if (d.s) m.base[d.s] = parseInt(t.value, 10) || 0;
+    else m[d.f] = t.type === 'checkbox' ? t.checked : d.f === 'count' ? Math.max(0, t.value | 0) : t.value;
+  }
+  else return;
+  clearResult(); render();
+});
+
+render();
+</script>
+</body>
+</html>
