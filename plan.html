@@ -68,10 +68,24 @@ const { evaluate } = solverModule();
 const DEFAULT = { machines: [], pool: [], seconds: 6, flip: true };
 let S;
 try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
-let plan = null, worker = null, stopped = false;
+let worker = null, stopped = false;
+
+// The plan is saved with everything else, so it is still there after a reload.
+const typesOf = pool => pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
+  node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback, count: 0 }));
+const planToSave = p => p && { at: p.at, avail: p.avail, pool: p.pool, stale: p.stale || '',
+  results: p.results.map(({ m, r, unreachable }) => ({ key: m.key, r: r && { placements: r.placements }, unreachable })) };
+function planFromSave(x) {
+  if (!x) return null;
+  const results = x.results.map(y => ({ ...y, m: S.machines.find(m => m.key === y.key) })).filter(y => y.m);
+  return { ...x, results, types: typesOf(x.pool) };
+}
+let plan = planFromSave(S.plan);
+// Settings changed after planning: keep showing the plan, with a note.
+const outdated = why => { if (plan) plan.stale = why; };
 
 const $ = s => document.querySelector(s);
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const save = () => { S.plan = planToSave(plan); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 const gm = m => GAME.machines[m.gameIndex];
 const layoutOf = m => GAME.bays[gm(m).bay][m.stage].layout;
 const accepts = (m, g) => g.node || gm(m).accepts.includes(g.type || 'universal');
@@ -228,7 +242,7 @@ function renderResults() {
     </div>`;
   }).join('');
   const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
-  const stale = plan.stale ? '<p class="warn">This plan was made before your last save import. Plan again to use the new save.</p>' : '';
+  const stale = plan.stale ? `<p class="warn">${esc(plan.stale === true ? 'This plan is out of date. Plan again to update it.' : plan.stale)}</p>` : '';
   $('#results').innerHTML = stale + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
 }
 
@@ -282,7 +296,7 @@ async function planAll() {
     if (r) take(r.placements, 1);
     results.push({ m, r, unreachable });
   }
-  plan = { results, avail, types: typesFor(ms[0], 0), pool: S.pool, at: Date.now() };
+  plan = { results, avail, types: typesOf(S.pool), pool: S.pool, at: Date.now() };
   // Keep a compact copy for overlay.html.
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r), S.pool);
   S.lastPlan = { at: plan.at, pool: S.pool.map(g => ({ name: g.name, node: !!g.node, base: g.base, cells: g.cells, details: moduleDetails(g) })),
@@ -330,7 +344,7 @@ async function importSave(file) {
       if (known.has(String(x.uid))) fromSave(x, known.get(String(x.uid)));
       else { S.machines.push(fresh(x)); added++; }
     }
-    if (plan) plan.stale = true; // keep showing the old plan; it uses the old module pool
+    outdated('This plan was made before your last save import. Plan again to use the new save.'); // it uses the old module pool
   } else {
     S.machines = data.machines.map(fresh);
     plan = null;
@@ -348,7 +362,7 @@ document.addEventListener('click', e => {
   else if (id === 'addMachine') {
     const gi = +$('#newType').value, n = S.machines.filter(m => m.gameIndex === gi).length + 1;
     S.machines.push(newMachine(gi, { name: `${GAME.machines[gi].name} (new ${n})` }));
-    plan = null; render();
+    outdated('Settings changed since this plan. Plan again to update it.'); render();
   }
   else if (id === 'solve') planAll();
   else if (id === 'openOverlay') showOverlay();
@@ -360,7 +374,7 @@ document.addEventListener('click', e => {
     const i = S.machines.findIndex(m => m.key === d.k);
     if (d.act === 'remove') S.machines.splice(i, 1);
     else { const j = d.act === 'up' ? i - 1 : i + 1; [S.machines[i], S.machines[j]] = [S.machines[j], S.machines[i]]; }
-    plan = null; render();
+    outdated('Settings changed since this plan. Plan again to update it.'); render();
   }
 });
 
@@ -388,7 +402,7 @@ document.addEventListener('drop', e => {
   e.preventDefault();
   const from = S.machines.findIndex(m => m.key === dragKey), to = S.machines.findIndex(m => m.key === c.dataset.card);
   dragKey = null; // the re-render removes the dragged card, so its dragend never reaches the document
-  if (from >= 0 && to >= 0 && from !== to) { S.machines.splice(to, 0, S.machines.splice(from, 1)[0]); plan = null; render(); }
+  if (from >= 0 && to >= 0 && from !== to) { S.machines.splice(to, 0, S.machines.splice(from, 1)[0]); outdated('Settings changed since this plan. Plan again to update it.'); render(); }
 });
 document.addEventListener('dragend', () => {
   dragKey = null;
@@ -417,7 +431,7 @@ document.addEventListener('change', e => {
   else if (f === 'jobPick') m.job = t.value === '' ? m.job : { work: +t.value, nights: m.job?.nights ?? null };
   else if (f === 'jobWork') m.job = { ...(m.job || {}), work: num() };
   else if (f === 'jobNights') m.job = { ...(m.job || {}), nights: num() };
-  plan = null; render();
+  outdated('Settings changed since this plan. Plan again to update it.'); render();
 });
 
 window.addEventListener('storage', e => { if (e.key === INSTALLED_KEY && plan) renderResults(); }); // ticked in the overlay

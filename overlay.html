@@ -41,7 +41,7 @@ try { pick = +localStorage.getItem('ps-overlay-pick') || 0; } catch {}
 
 function render() {
   const list = entries();
-  if (!list.length) { $('#pick').innerHTML = ''; $('#view').innerHTML = '<p class="hint">Nothing to show yet: run a plan or save a layout.</p>'; return; }
+  if (!list.length) { $('#pick').innerHTML = ''; $('#view').innerHTML = `<p class="hint">Nothing to show yet: run a plan or save a layout. Plans are saved per site, so open this overlay from the same site you planned on (this is ${esc(location.host || 'a local file')}). localhost and GitHub Pages keep separate data.</p>`; return; }
   pick = Math.min(Math.max(0, pick), list.length - 1);
   try { localStorage.setItem('ps-overlay-pick', pick); } catch {}
   $('#pick').innerHTML = list.map((e, i) => `<option value="${i}" ${i === pick ? 'selected' : ''}>${esc(e.title)}</option>`).join('');
