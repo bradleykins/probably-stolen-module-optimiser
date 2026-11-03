@@ -44,6 +44,7 @@ nav a { color: var(--accent); }
     <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
       Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose. A job deadline is a stop point: Performance stops at what the deadline needs, and spare modules go to the other machines. A machine whose installed modules already meet its target is kept exactly as it is.
       Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
+    <p id="reimport" class="warn" hidden>This page reads saves better since you last imported (for example, AgeWell modules now count as installed). Click Import from save again.</p>
     <ol id="rank"></ol>
     <div id="machines"></div>
   </section>
@@ -71,6 +72,8 @@ nav a { color: var(--accent); }
 const KEY = 'ps-plan-v1';
 const { evaluate } = solverModule();
 const DEFAULT = { machines: [], pool: [], seconds: 6, flip: true };
+// Bump when the save reader or machine list changes what an import gives, so old imports ask to be redone.
+const SAVE_READER = 2;
 let S;
 try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
 let worker = null, stopped = false;
@@ -214,6 +217,7 @@ function renderPool() {
 }
 
 function render() {
+  $('#reimport').hidden = !S.pool.length || S.reader === SAVE_READER;
   save();
   $('#seconds').value = S.seconds; $('#flip').checked = S.flip;
   renderMachines(); renderPool(); renderResults();
@@ -574,6 +578,7 @@ async function importSave(file) {
   }
   // The pool is what you own now: the save is the truth, so sold or used-up modules leave it.
   S.pool = data.modules;
+  S.reader = SAVE_READER;
   render();
   const gone = S.machines.filter(m => m.missing).length;
   $('#status').textContent = `${same ? 'Updated from save' : 'Imported'}: ${data.machines.length} machines${same ? ` (${added} new${gone ? `, ${gone} not in this save` : ''})` : ''}, ${data.modules.reduce((s, g) => s + g.count, 0)} modules/nodes.`;
