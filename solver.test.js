@@ -114,4 +114,14 @@ assert.strictEqual(new Set(reqCells).size, reqCells.length, 'no overlaps with th
 const free = solve(big, furnaceTypes, { weights: [0, 1, 0], mins: [null, null, 200], flip: true, heuristicMs: 300, timeLimitMs: 4000 });
 assert.ok(!free.placements.some(p => p.id === 1), 'not chosen when not required');
 console.log('required module:', req.totals);
+
+// Two required modules (the 3D Printer's Metal Printer + CNC): both placed, no overlaps, the minimum still met.
+const printerTypes = [mod(1, bar, 1, [0, -50, 0]), mod(2, bar, 1, [-25, -25, 0]), mod(3, sq, 3, [30, 0, 0]), mod(4, C, 2, [20, -5, 0]), node(5, dom, 2)];
+const two = solve(big, printerTypes, { weights: [0, 1, 0], mins: [60, null, null], require: [1, 2], flip: true, heuristicMs: 300, timeLimitMs: 4000 });
+assert.ok(two.found && [1, 2].every(id => two.placements.some(p => p.id === id)), 'both required modules placed');
+assert.ok(two.totals[0] >= 60, 'minimum met around them');
+check(big, printerTypes, two);
+const twoCells = two.placements.flatMap(p => p.cells);
+assert.strictEqual(new Set(twoCells).size, twoCells.length, 'no overlaps between required modules');
+console.log('two required modules:', two.totals);
 console.log('all tests passed');

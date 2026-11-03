@@ -9,6 +9,8 @@ const powerUse = (base, bonus) => Math.max(1, base - trunc(base * bonus / 100));
 // Progress speed per cycle; some machines only get 1/ratio of Performance.
 const speed = (base, P, ratio) => ratio ? trunc(base + trunc(base * P / ratio) / 100) : base + trunc(base * P / 100);
 
+// Modules a 3D Printer chip needs installed (the job list below refers to these).
+const METAL = ['Metal Printer Module'], METAL_CNC = ['Metal Printer Module', 'Computer Numerical Control Module'];
 const GAME = {
   // '#' = blocked slot. Standard machines start at stage 0; each Module Bay Expansion Kit opens the next stage.
   bays: {
@@ -197,7 +199,9 @@ const GAME = {
       ],
     },
     {
-      name: '3D Printer', id: 'printer', progress: { base: 24 }, jobs: [['Small Plastic Bottle x6', 10], ['Improved Internal Springs x4', 20], ['Makeshift RDS x4', 20], ['Toy Laser Pointer x4', 20], ['RDS x2', 24], ['Laser Sight x2', 24], ['Silencer x2', 24], ['.22 Mag x2', 24], ['Gun Part x3', 30], ['Box Cutter x3', 34], ['.22 Mag High x2', 36], ['10mm Mag x2', 36], ['.22 Mag Ext x2', 48], ['10mm Mag High', 48], ['.22 Pistol', 50], ['.22 Pistol x2', 60], ['10mm Mag Ext', 60], ['Nestfire Compact Frame', 60], ['Kitchen Knife x4', 64], ['Ironcraft 10 Frame', 70], ['Hatchet x4', 75], ['Meat Cleaver x4', 82], ['Combat Knife x5', 98], ['Combat Machete x3', 120]], bay: 'standard', accepts: ['universal', 'printer'], power: 8,
+      // Jobs: [name, work, modules the chip needs]. From ModuleDirectory: CreateCncChip needs the "Metal Printing
+      // Module" and "CNC Module" machine tags; 10mm mags and combat melee chips need Metal Printing only.
+      name: '3D Printer', id: 'printer', progress: { base: 24 }, jobs: [['Small Plastic Bottle x6', 10], ['Improved Internal Springs x4', 20], ['Makeshift RDS x4', 20], ['Toy Laser Pointer x4', 20], ['RDS x2', 24], ['Laser Sight x2', 24], ['Silencer x2', 24], ['.22 Mag x2', 24], ['Gun Part x3', 30, METAL_CNC], ['Box Cutter x3', 34], ['.22 Mag High x2', 36], ['10mm Mag x2', 36, METAL], ['.22 Mag Ext x2', 48], ['10mm Mag High', 48, METAL], ['.22 Pistol', 50], ['.22 Pistol x2', 60], ['10mm Mag Ext', 60, METAL], ['Nestfire Compact Frame', 60, METAL_CNC], ['Kitchen Knife x4', 64], ['Ironcraft 10 Frame', 70, METAL_CNC], ['Hatchet x4', 75], ['Meat Cleaver x4', 82], ['Combat Knife x5', 98, METAL], ['Combat Machete x3', 120, METAL]], bay: 'standard', accepts: ['universal', 'printer'], power: 8,
       stats: 'Quality/4 = print quality (melee condition roll 20-30 + Quality/4: Good at 60, Excellent at 90). Performance = progress (base 24).',
       readout: (P, E, Q) => {
         const q = trunc(Q / 4);

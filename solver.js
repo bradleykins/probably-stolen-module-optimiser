@@ -419,31 +419,39 @@ function solverModule() {
     return { found, score: best, totals: bestTotals, placements: bestPlace, optimal: !timedOut, steps };
   }
 
-  // A layout that must include one module of type opts.require[0]: try it in every spot it fits with a
-  // short search each, then give the best spot the rest of the time.
-  // shortcut: only the first required type is enforced; loop over spots per type if more are ever needed.
+  // A layout that must include one module of each type in opts.require (e.g. the Furnace's Blast, or the
+  // 3D Printer's Metal Printer + CNC modules). Each required module in turn is tried in every spot it fits
+  // (around the ones already placed) with a short search; the best spot stays. Then the rest of the time
+  // builds the layout around all of them.
+  // shortcut: required modules are placed one after another (greedy), not jointly; fine for 1-2 of them.
   function solveRequired(grid, types, opts) {
-    const t = types.find(x => x.id === opts.require[0] && x.count > 0);
     const rest = { ...opts, require: null };
-    if (!t) return solve(grid, types, rest);
-    const spots = [], seen = new Set();
-    for (const o of orientations(t.cells, opts.rotate !== false, !!opts.flip))
-      for (let pos = 0; pos < grid.rows * grid.cols; pos++) {
-        const r = Math.floor(pos / grid.cols), c = pos % grid.cols;
-        const idx = o.map(([dr, dc]) => [r + dr, c + dc]);
-        if (idx.some(([rr, cc]) => rr >= grid.rows || cc < 0 || cc >= grid.cols || !grid.usable[rr * grid.cols + cc])) continue;
-        const cells = idx.map(([rr, cc]) => rr * grid.cols + cc), key = cells.slice().sort((a, b) => a - b).join();
-        if (!seen.has(key)) { seen.add(key); spots.push(cells); }
+    const need = opts.require.map(id => types.find(x => x.id === id && x.count > 0)).filter(Boolean);
+    const total = opts.timeLimitMs ?? 5000, fixed = [];
+    let best = null;
+    for (const t of need) {
+      const taken = new Set(fixed.flatMap(f => f.cells)), spots = [], seen = new Set();
+      for (const o of orientations(t.cells, opts.rotate !== false, !!opts.flip))
+        for (let pos = 0; pos < grid.rows * grid.cols; pos++) {
+          const r = Math.floor(pos / grid.cols), c = pos % grid.cols;
+          const idx = o.map(([dr, dc]) => [r + dr, c + dc]);
+          if (idx.some(([rr, cc]) => rr >= grid.rows || cc < 0 || cc >= grid.cols || !grid.usable[rr * grid.cols + cc] || taken.has(rr * grid.cols + cc))) continue;
+          const cells = idx.map(([rr, cc]) => rr * grid.cols + cc), key = cells.slice().sort((x, y) => x - y).join();
+          if (!seen.has(key)) { seen.add(key); spots.push(cells); }
+        }
+      const each = Math.max(100, total / 2 / need.length / Math.max(1, spots.length));
+      let stepBest = null, bestCells = null;
+      for (const cells of spots) {
+        const r = solve(grid, types, { ...rest, fixed: [...fixed, { id: t.id, cells }], timeLimitMs: each, heuristicMs: each * 0.8, onImprove: null });
+        if (r.found && (!stepBest || r.score > stepBest.score)) { stepBest = r; bestCells = cells; if (opts.onImprove) opts.onImprove({ ...r, optimal: false }); }
       }
-    const total = opts.timeLimitMs ?? 5000, each = Math.max(100, total / 2 / Math.max(1, spots.length));
-    let best = null, bestCells = null;
-    for (const cells of spots) {
-      const r = solve(grid, types, { ...rest, fixed: [{ id: t.id, cells }], timeLimitMs: each, heuristicMs: each * 0.8, onImprove: null });
-      if (r.found && (!best || r.score > best.score)) { best = r; bestCells = cells; if (opts.onImprove) opts.onImprove({ ...r, optimal: false }); }
+      if (!stepBest) return { found: false, score: 0, totals: [0, 0, 0], placements: [], optimal: false, steps: 0 };
+      fixed.push({ id: t.id, cells: bestCells });
+      best = stepBest;
     }
-    if (!best) return { found: false, score: 0, totals: [0, 0, 0], placements: [], optimal: false, steps: 0 };
+    if (!best) return solve(grid, types, rest);
     const left = Math.max(500, total / 2);
-    const r = solve(grid, types, { ...rest, fixed: [{ id: t.id, cells: bestCells }], timeLimitMs: left, heuristicMs: Math.min(opts.heuristicMs ?? 0, left / 2) || left / 2 });
+    const r = solve(grid, types, { ...rest, fixed, timeLimitMs: left, heuristicMs: Math.min(opts.heuristicMs ?? 0, left / 2) || left / 2 });
     const out = r.found && r.score >= best.score ? r : best;
     return { ...out, optimal: false };
   }

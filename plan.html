@@ -120,17 +120,21 @@ function jobPerformance(m) {
   return GAME.minPerformance(gm(m), m.job.work, m.job.nights);
 }
 
+// Modules this machine must have installed: the Furnace's Blast if ticked, plus what the chosen recipe needs.
+const neededNames = m => { const g = gm(m); return [...(g.option && m[g.option.key] ? [g.option.module] : []), ...(m.job?.needs || [])]; };
+const owns = name => S.pool.some(g => g.count > 0 && g.name.startsWith(name));
+
 function jobHtml(m) {
   const g = gm(m);
   if (!g.progress) return '';
   const jobs = g.jobs || [];
   const need = jobPerformance(m);
   return `<div class="row stack" style="margin:4px 0">
-    <label>Job${jobs.length ? `<select data-k="${m.key}" data-f="jobPick"><option value="">Custom</option>${jobs.map(([n, w]) => `<option value="${w}" ${m.job && +m.job.work === w ? 'selected' : ''}>${esc(n)} (${w})</option>`).join('')}</select>` : ''}</label>
+    <label>Job${jobs.length ? `<select data-k="${m.key}" data-f="jobPick"><option value="">Custom</option>${jobs.map(([n, w, needs], j) => `<option value="${j}" ${m.job && (m.job.pick === undefined ? +m.job.work === w : m.job.pick === j) ? 'selected' : ''}>${esc(n)} (${w})${needs ? ' · needs modules' : ''}</option>`).join('')}</select>` : ''}</label>
     <label>Work<input type="number" min="0" data-k="${m.key}" data-f="jobWork" value="${m.job?.work ?? ''}" placeholder="none"></label>
     <label>Within nights<input type="number" min="1" data-k="${m.key}" data-f="jobNights" value="${m.job?.nights ?? ''}" placeholder="—"></label>
     <span class="muted" style="align-self:end">${need === null ? (m.job?.work ? 'out of reach' : '') : `needs Performance ≥ ${need}`}</span>
-  </div>`;
+  </div>${m.job?.needs?.length ? `<div style="font-size:12px">This recipe needs ${m.job.needs.map(n => owns(n) || !S.pool.length ? `<b>${esc(n)}</b>` : `<b>${esc(n)}</b> <span class="bad">(you own none)</span>`).join(' and ')}: added to the layout automatically.</div>` : ''}`;
 }
 
 function currentHtml(m) {
@@ -242,7 +246,7 @@ function renderResults() {
       ${kept && !r.gave?.length ? '<p class="ok">Already meets its target with the modules installed now (or has no target you set): kept exactly as it is, nothing to change.</p>' : ''}
       ${kept && r.gave?.length ? `<p class="ok">Meets its target with the modules installed now. Only change: take out the module${r.gave.length === 1 ? '' : 's'} below for another machine; it still meets its target and nothing it prioritises gets worse.</p>
         <ul class="plain">${r.gave.map(p => `<li><span class="swatch" style="background:${moduleColor(plan.pool[p.id])}"></span>Take out ${esc(plan.pool[p.id].name)} <span class="muted">— ${moduleDetailsHtml(plan.pool[p.id])}</span></li>`).join('')}</ul>` : ''}
-      ${g.option && m[g.option.key] && !r.placements.some(p => plan.pool[p.id].name.startsWith(g.option.module)) ? `<p class="warn">No free ${esc(g.option.module)}: planned without it.</p>` : ''}
+      ${neededNames(m).filter(n => !r.placements.some(p => plan.pool[p.id].name.startsWith(n))).map(n => `<p class="bad">No free ${esc(n)}: planned without it, so this machine cannot run its recipe until you get one.</p>`).join('')}
       <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, installedOf(plan.at)[m.name] || [])}</figure>
         <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, { blast: !!m.blast }).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
@@ -270,7 +274,14 @@ async function planAll() {
     count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) }));
   const budget = Math.max(1, S.seconds) * 1000;
   // A machine option (Furnace: Blast) makes the layout include that module, if one is still free.
-  const required = m => { const id = requiredModule(gm(m), !!m.blast, S.pool.map((g, i) => ({ name: g.name, count: accepts(m, g) ? avail[i] : 0 }))); return id === null ? null : [id]; };
+  const required = m => {
+    const ids = [];
+    for (const name of neededNames(m)) {
+      const i = S.pool.findIndex((g, j) => !ids.includes(j) && accepts(m, g) && avail[j] > 0 && g.name.startsWith(name));
+      if (i >= 0) ids.push(i);
+    }
+    return ids.length ? ids : null;
+  };
   const opts = (weights, mins, m) => ({ weights, mins, require: required(m), rotate: true, flip: S.flip, heuristicMs: Math.min(3000, budget / 2), timeLimitMs: budget });
   const step = (pass, i, m) => ($('#status').textContent = `${pass} — ${i + 1}/${ms.length}: ${m.name}…`);
   const pass1 = new Map(), results = [];
@@ -283,7 +294,7 @@ async function planAll() {
     if (!c || !c.installed.length || (c.stage !== undefined && c.stage !== m.stage)) return false;
     if (mins.every(v => v === null)) return !m.userTarget; // no target to reach and you set none: leave it alone
     if (!mins.every((v, k) => v === null || c.totals[k] >= v)) return false;
-    return !(g.option && m[g.option.key] && !c.installed.some(x => x.module.name.startsWith(g.option.module)));
+    return neededNames(m).every(name => c.installed.some(x => x.module.name.startsWith(name)));
   };
   const kept = new Map();
   for (const m of ms) {
@@ -306,7 +317,8 @@ async function planAll() {
     if (effectiveMins(m).every(v => v === null) && m.priority.every(v => v === null)) continue; // nothing says what matters: touch nothing
     const before = evaluate(grid, r.placements, byIdAll).totals;
     let left = r.placements.map((p, i) => ({ ...p, i }));
-    for (const p of [...left].sort((a, b) => costOf(S.pool[b.id]) - costOf(S.pool[a.id]))) { // most useful to others first
+    const mustKeep = p => neededNames(m).some(name => S.pool[p.id].name.startsWith(name));
+    for (const p of [...left].filter(p => !mustKeep(p)).sort((a, b) => costOf(S.pool[b.id]) - costOf(S.pool[a.id]))) { // most useful to others first
       const trial = left.filter(x => x !== p);
       if (noImpact(m, before, evaluate(grid, trial, byIdAll).totals)) { left = trial; list.push(p.i); }
     }
@@ -491,8 +503,8 @@ document.addEventListener('change', e => {
   else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));
   else if (f.startsWith('min')) m.mins[+f.slice(3)] = num();
   else if (f.startsWith('prio')) m.priority[+f.slice(4)] = t.value === '' ? null : +t.value;
-  else if (f === 'jobPick') m.job = t.value === '' ? m.job : { work: +t.value, nights: m.job?.nights ?? null };
-  else if (f === 'jobWork') m.job = { ...(m.job || {}), work: num() };
+  else if (f === 'jobPick' && t.value !== '') { const [, work, needs] = gm(m).jobs[+t.value]; m.job = { work, nights: m.job?.nights ?? null, pick: +t.value, needs: needs || [] }; }
+  else if (f === 'jobWork') m.job = { ...(m.job || {}), work: num(), pick: null, needs: [] }; // typed by hand: a custom job
   else if (f === 'jobNights') m.job = { ...(m.job || {}), nights: num() };
   outdated('Settings changed since this plan. Plan again to update it.'); render();
 });
