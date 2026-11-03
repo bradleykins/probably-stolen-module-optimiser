@@ -98,6 +98,9 @@ function readSave(text, GAME) {
       uid: o.uniqueId, gameIndex, name: `${o.name} #${o.uniqueId}`,
       stage: Math.min(saveInt(o, 'MODULE_UPGRADE_STAGE_INT'), GAME.bays[gm.bay].length - 1),
       totals: ['PERFORMANCE', 'POWER', 'QUALITY'].map(s => saveInt(o, `TOTAL_PERCENTAGE_${s}_BONUS_INT`)),
+      // Working: the game locks the module bay while a machine works (MachineHelper.LockModuleInv sets
+      // LOCKED_WORKING_TAG; it stays in the save switched off once the job is done).
+      working: o._keys.includes('LOCKED_WORKING_TAG') && saveTag(o, 'LOCKED_WORKING_TAG').valueEnabled === true,
       job, installed,
     });
   }

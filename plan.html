@@ -92,6 +92,8 @@ const outdated = why => { if (plan) plan.stale = why; };
 const $ = s => document.querySelector(s);
 const save = () => { S.plan = planToSave(plan); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 const gm = m => GAME.machines[m.gameIndex];
+// Hands off: you locked it, or it is working in the game (its module bay is locked until the job is done).
+const handsOff = m => m.locked || m.working;
 const layoutOf = m => GAME.bays[gm(m).bay][m.stage].layout;
 const accepts = (m, g) => g.node || gm(m).accepts.includes(g.type || 'universal');
 const machineName = uid => (S.machines.find(m => String(m.uid) === String(uid)) || {}).name || `machine #${uid}`;
@@ -157,11 +159,11 @@ function currentHtml(m) {
 function renderMachines() {
   $('#newType').innerHTML = GAME.machines.map((g, i) => `<option value="${i}">${esc(g.name)}</option>`).join('');
   // Compact rank list: short rows, so any drop target fits on screen (the cards below are tall).
-  $('#rank').innerHTML = S.machines.length > 1 ? S.machines.map(m => `<li class="${m.include && !m.locked ? '' : 'skip'}" data-card="${m.key}" draggable="true" data-k="${m.key}">
-    <span class="grip">⠿</span> ${esc(m.name)}${m.locked ? ' <span class="warn">locked</span>' : m.userTarget ? ' <span class="ok">your target</span>' : ''}</li>`).join('') : '';
+  $('#rank').innerHTML = S.machines.length > 1 ? S.machines.map(m => `<li class="${m.include && !handsOff(m) ? '' : 'skip'}" data-card="${m.key}" draggable="true" data-k="${m.key}">
+    <span class="grip">⠿</span> ${esc(m.name)}${m.working ? ' <span class="warn">working</span>' : ''}${m.locked ? ' <span class="warn">locked</span>' : m.userTarget ? ' <span class="ok">your target</span>' : ''}</li>`).join('') : '';
   $('#machines').innerHTML = S.machines.map((m, i) => {
     const g = gm(m), bays = GAME.bays[g.bay];
-    return `<div class="mcard${m.include && !m.locked ? '' : ' skip'}" data-card="${m.key}">
+    return `<div class="mcard${m.include && !handsOff(m) ? '' : ' skip'}" data-card="${m.key}">
       <div class="row" style="margin-bottom:4px">
         <span class="grip" draggable="true" data-k="${m.key}" title="Drag to change rank">⠿</span><b>${i + 1}.</b>
         <h4>${esc(m.name)}</h4>
@@ -170,7 +172,7 @@ function renderMachines() {
         <label class="muted" title="It keeps running: it keeps the modules it has now and is not planned"><input type="checkbox" data-k="${m.key}" data-f="locked" ${m.locked ? 'checked' : ''}> Locked</label>
         <button data-k="${m.key}" data-act="remove">Remove</button>
       </div>
-      ${currentHtml(m)}${m.locked ? '<div class="warn" style="font-size:12px">Locked: it keeps the modules installed now, and no other machine is planned to use them.</div>' : ''}${m.missing ? '<div class="warn" style="font-size:12px">Not in the latest save import. Kept with its old settings and layout; Remove it if it is gone.</div>' : ''}
+      ${currentHtml(m)}${m.working ? '<div class="warn" style="font-size:12px"><b>Working</b> (from your save): its module bay is locked in the game until the job is done, so it keeps its modules and is not planned. Import the save again after it stops and it is planned as usual.</div>' : ''}${m.locked ? '<div class="warn" style="font-size:12px">Locked: it keeps the modules installed now, and no other machine is planned to use them.</div>' : ''}${m.missing ? '<div class="warn" style="font-size:12px">Not in the latest save import. Kept with its old settings and layout; Remove it if it is gone.</div>' : ''}
       <div class="${m.userTarget ? 'ok' : 'muted'}" style="font-size:12px">${m.userTarget ? 'Your target: planned before default targets, in rank order.' : 'Default target: keep what it does now. Change it to make it yours.'}</div>
       <div class="row stack" style="margin:6px 0 0">
         <label>Bay<select data-k="${m.key}" data-f="stage">${bays.map((b, s) => `<option value="${s}" ${s === m.stage ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
@@ -192,7 +194,7 @@ function renderMachines() {
 function renderPool() {
   const total = S.pool.reduce((s, g) => s + g.count, 0);
   const loose = S.pool.reduce((s, g) => s + (g.where?.[0] || 0), 0);
-  $('#pool').innerHTML = total ? `<p class="muted">Module pool: ${total} items (${S.pool.length} kinds); ${total - loose} installed in machines now, ${loose} loose. Every owned module is available to the plan, except those in locked machines.</p>` : '';
+  $('#pool').innerHTML = total ? `<p class="muted">Module pool: ${total} items (${S.pool.length} kinds); ${total - loose} installed in machines now, ${loose} loose. Every owned module is available to the plan, except those in locked or working machines.</p>` : '';
 }
 
 function render() {
@@ -204,7 +206,7 @@ function render() {
 // Physical moves: each machine keeps its own copies first, then takes loose ones, then takes from other machines.
 function sourcesFor(results, pool) {
   const stock = pool.map(g => ({ ...(g.where || { 0: g.count }) }));
-  for (const m of S.machines) if (m.locked && m.uid != null) for (const st of stock) delete st[m.uid]; // locked: its modules stay put
+  for (const m of S.machines) if (handsOff(m) && m.uid != null) for (const st of stock) delete st[m.uid]; // locked or working: its modules stay put
   // Kept machines: only the modules they give up can be taken.
   for (const { m, r, kept } of results) if (kept && m.uid != null) stock.forEach((st, id) => {
     const n = (r.gave || []).filter(p => p.id === id).length;
@@ -278,11 +280,11 @@ function renderResults() {
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
 
 async function planAll() {
-  const ms = S.machines.filter(m => m.include && !m.locked);
+  const ms = S.machines.filter(m => m.include && !handsOff(m));
   if (!ms.length || !S.pool.length) { $('#status').textContent = 'Import a save (or add machines and modules) first.'; return; }
   stopped = false;
   $('#solve').disabled = true; $('#stop').disabled = false;
-  const locked = S.machines.filter(m => m.locked && m.uid != null);
+  const locked = S.machines.filter(m => handsOff(m) && m.uid != null);
   const avail = S.pool.map(g => g.count - locked.reduce((n, m) => n + (g.where?.[m.uid] || 0), 0));
   const take = (placements, sign) => placements.forEach(p => (avail[p.id] -= sign));
   // weights (pass 2): a Learning Algorithm module also earns what it will still grow, valued like stats it has
@@ -419,7 +421,7 @@ async function importSave(file) {
   if (!same && S.machines.length && !confirm('This looks like a different save. Replace the current machines and module pool with the ones from it?')) return;
   const fromSave = (x, m) => {
     const g = GAME.machines[x.gameIndex];
-    Object.assign(m, { name: x.name, stage: x.stage, missing: false, current: { totals: x.totals, job: x.job, installed: x.installed, stage: x.stage } });
+    Object.assign(m, { name: x.name, stage: x.stage, missing: false, working: !!x.working, current: { totals: x.totals, job: x.job, installed: x.installed, stage: x.stage } });
     if (m.userTarget) return m;
     // Default targets: keep what the machine does now, for the stats that matter on it
     // (Performance/Quality; Efficiency only lowers power use, so it is left free).
