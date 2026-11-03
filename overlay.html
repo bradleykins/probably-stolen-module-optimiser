@@ -57,7 +57,7 @@ function render() {
   const keptBanner = !e.kept ? '' : e.gave.length
     ? `<p class="ok"><b>Keep as it is, except:</b> take out ${e.gave.map(id => esc(e.modules[id]?.name || '?')).join(', ')} for another machine.</p>`
     : '<p class="ok"><b>Nothing to change.</b> This machine already meets its target: keep it exactly as it is.</p>';
-  const list2 = e.kept ? checklistHtml(e.placements, e.modules, e.placements.map(() => true), '', e.items, true) : e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items)
+  const list2 = e.kept ? checklistHtml(e.placements, e.modules, e.placements.map(() => true), '', e.items, true) : e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items, false, true)
     : checklistHtml(e.placements, e.modules, e.inserted, '', [], true);
   $('#top').innerHTML = `<div ${e.name && !e.kept ? `data-tick="${esc(e.name)}" data-at="${e.at}"` : ''}>${boardHtml(e.layout, e.placements, e.modules, 36, e.kept ? e.placements.map(() => true) : e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}</div>
     ${legendHtml()}

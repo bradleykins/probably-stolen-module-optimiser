@@ -63,8 +63,12 @@ const legendHtml = () => `<div class="legend">${STATS.map((s, k) => `<span><span
 
 // Install checklist: one row per placed item, ticked once it is in the machine (ticked rows grey out).
 // attrs: data attributes for the checkboxes; sources[n]: where item n comes from.
-function checklistHtml(placements, modules, done, attrs, sources = [], disabled = false) {
-  const rows = placements.map((p, n) => {
+// doneLast: list items still to install first, then installed ones, each in plan order.
+function checklistHtml(placements, modules, done, attrs, sources = [], disabled = false, doneLast = false) {
+  const order = placements.map((p, n) => n);
+  if (doneLast) order.sort((a, b) => !!done[a] - !!done[b] || a - b);
+  const rows = order.map(n => {
+    const p = placements[n];
     const m = modules[p.id] || { name: '?', cells: p.cells, base: [0, 0, 0] };
     const details = m.base || m.node ? moduleDetailsHtml({ cells: p.cells, ...m }) : esc(m.details || '');
     return `<div class="component-row${done[n] ? ' done' : ''}" style="--component-color:${moduleColors(m)[0]}">
