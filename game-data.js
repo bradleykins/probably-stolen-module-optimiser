@@ -98,7 +98,9 @@ const GAME = {
       readout: (P, E, Q) => {
         const steps = [[200, '100%'], [100, '99.9%'], [75, '99.8%'], [50, '99.65%'], [25, '99.35%'], [15, '99.15%']];
         const hit = steps.find(([q]) => Q >= q);
-        return [`Max purity: ${hit ? hit[1] : '99%'}`, `Cleaning amount: ${pct(P)} on top of the dirt bonus`, `Power: ${powerUse(4, E)} per cycle`];
+        const n = GAME.purifyCycles(20000000, 9000, P, Q);
+        return [`Max purity: ${hit ? hit[1] : '99%'}`, `Cleaning amount: ${pct(P)} on top of the dirt bonus`,
+          `20,000 mL of rust water (90%) to ${hit ? hit[1] : '99%'}: ${n} cycle${n === 1 ? '' : 's'}`, `Power: ${powerUse(4, E)} per cycle`];
       },
       presets: [
         { label: '100% purity (Quality ≥ 200)', mins: [null, null, 200], weights: [1, 0.5, 0] },
@@ -240,6 +242,31 @@ GAME.ingotPurity = grades => {
 
 // Progress machines run once per night. Work done per night at a Performance total, and the
 // lowest Performance that finishes `work` within `nights` (null if out of reach).
+// Water Purifier cycles to clean a container (volume in µL, purity in 1/100 %) to the machine's max purity.
+// MachinePurifier.PurifyContainer: the budget per cycle is (min(volume, 10 L) × 0.3% + 25 mL) × (dirt bonus + P/100) × 1.25,
+// and contaminants are turned into water until the purity cap (set by Quality) is reached.
+GAME.purifyCycles = (volume, purity, P, Q) => {
+  const curve = [[9800, 1], [9400, 2], [8850, 5], [8000, 10], [6250, 15], [3750, 20]];
+  const dirtBonus = p => {
+    if (p >= curve[0][0]) return curve[0][1];
+    for (let i = 1; i < curve.length; i++) if (p >= curve[i][0]) {
+      const [a, x] = curve[i - 1], [b, y] = curve[i];
+      return x + ((a - p) / (a - b)) * (y - x);
+    }
+    return curve[curve.length - 1][1];
+  };
+  const mult = Q >= 200 ? 0 : Q >= 100 ? 0.1 : Q >= 75 ? 0.2 : Q >= 50 ? 0.35 : Q >= 25 ? 0.65 : Q >= 15 ? 0.85 : 1;
+  const cap = 10000 - Math.round(100 * mult), keep = Math.floor(volume * (10000 - cap) / 10000);
+  let dirt = volume - Math.ceil(volume * purity / 10000), n = 0;
+  while (dirt - keep > 0 && n < 10000) {
+    const p = Math.floor((volume - dirt) * 10000 / volume);
+    const budget = Math.floor((Math.floor(Math.min(volume, 10000000) * 3 / 1000) + 25000) * Math.max(0, dirtBonus(p) + P / 100) * 1.25);
+    if (budget <= 0) return Infinity;
+    dirt -= Math.min(budget, dirt - keep);
+    n++;
+  }
+  return n;
+};
 GAME.speedOf = (m, P) => speed(m.progress.base, P, m.progress.ratio);
 GAME.nightsFor = (m, P, work) => { const s = GAME.speedOf(m, P); return s > 0 ? Math.ceil(work / s) : Infinity; };
 GAME.minPerformance = (m, work, nights) => {
