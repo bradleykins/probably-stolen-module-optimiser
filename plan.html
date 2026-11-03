@@ -39,7 +39,7 @@ nav a { color: var(--accent); }
       <select id="newType" aria-label="Machine type"></select><button id="addMachine">Add machine</button>
     </div>
     <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
-      Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose. A job deadline is a stop point: Performance stops at what the deadline needs, and spare modules go to the other machines.
+      Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose. A job deadline is a stop point: Performance stops at what the deadline needs, and spare modules go to the other machines. A machine whose installed modules already meet its target is kept exactly as it is.
       Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
     <ol id="rank"></ol>
     <div id="machines"></div>
@@ -74,7 +74,7 @@ let worker = null, stopped = false;
 const typesOf = pool => pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
   node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback, count: 0 }));
 const planToSave = p => p && { at: p.at, avail: p.avail, pool: p.pool, stale: p.stale || '',
-  results: p.results.map(({ m, r, unreachable }) => ({ key: m.key, r: r && { placements: r.placements }, unreachable })) };
+  results: p.results.map(({ m, r, unreachable, kept }) => ({ key: m.key, r: r && { placements: r.placements, gave: r.gave }, unreachable, kept: !!kept })) };
 function planFromSave(x) {
   if (!x) return null;
   const results = x.results.map(y => ({ ...y, m: S.machines.find(m => m.key === y.key) })).filter(y => y.m);
@@ -195,6 +195,11 @@ function render() {
 function sourcesFor(results, pool) {
   const stock = pool.map(g => ({ ...(g.where || { 0: g.count }) }));
   for (const m of S.machines) if (m.locked && m.uid != null) for (const st of stock) delete st[m.uid]; // locked: its modules stay put
+  // Kept machines: only the modules they give up can be taken.
+  for (const { m, r, kept } of results) if (kept && m.uid != null) stock.forEach((st, id) => {
+    const n = (r.gave || []).filter(p => p.id === id).length;
+    if (n) st[m.uid] = n; else delete st[m.uid];
+  });
   const out = new Map();
   const takeFrom = (id, n, where, list) => {
     const k = Math.min(n, stock[id][where] || 0);
@@ -202,7 +207,8 @@ function sourcesFor(results, pool) {
     return n - k;
   };
   // Per placed item, in placement order: where to get it (already here, loose, or from another machine).
-  for (const { m, r } of results) {
+  for (const { m, r, kept } of results) {
+    if (kept) { out.set(m.key, r.placements.map(() => 'already in this machine')); continue; }
     const items = r.placements.map(p => {
       const from = [];
       let need = takeFrom(p.id, 1, m.uid ?? -1, from);
@@ -221,7 +227,7 @@ function renderResults() {
   if (!plan) { $('#results').innerHTML = ''; return; }
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t]));
   const sources = sourcesFor(plan.results.filter(x => x.r), plan.pool);
-  const cards = plan.results.map(({ m, r, unreachable }) => {
+  const cards = plan.results.map(({ m, r, unreachable, kept }) => {
     const g = gm(m), layout = layoutOf(m), grid = gridOf(layout);
     const now = m.current ? `<figure><figcaption>Now</figcaption>${boardHtml(layout, m.current.installed.map((x, id) => ({ id, cells: x.cells })), m.current.installed.map(x => x.module), 22)}</figure>` : '';
     if (!r) return `<div class="mcard"><h4>${esc(m.name)}</h4><p class="muted">No target or priorities: nothing planned.</p></div>`;
@@ -233,12 +239,15 @@ function renderResults() {
       ${!unreachable ? '' : m.userTarget
         ? '<p class="bad">Your target is not reachable with the modules left after the higher-ranked targets you set; maximised its priorities instead. Rank it higher to put it first.</p>'
         : '<p class="warn">Default target (keep what it does now) not reachable once your targets took their modules; maximised its priorities instead.</p>'}
+      ${kept && !r.gave?.length ? '<p class="ok">Already meets its target with the modules installed now (or has no target you set): kept exactly as it is, nothing to change.</p>' : ''}
+      ${kept && r.gave?.length ? `<p class="ok">Meets its target with the modules installed now. Only change: take out the module${r.gave.length === 1 ? '' : 's'} below for another machine; it still meets its target and nothing it prioritises gets worse.</p>
+        <ul class="plain">${r.gave.map(p => `<li><span class="swatch" style="background:${moduleColor(plan.pool[p.id])}"></span>Take out ${esc(plan.pool[p.id].name)} <span class="muted">— ${moduleDetailsHtml(plan.pool[p.id])}</span></li>`).join('')}</ul>` : ''}
       ${g.option && m[g.option.key] && !r.placements.some(p => plan.pool[p.id].name.startsWith(g.option.module)) ? `<p class="warn">No free ${esc(g.option.module)}: planned without it.</p>` : ''}
       <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, installedOf(plan.at)[m.name] || [])}</figure>
         <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, { blast: !!m.blast }).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
       </div>
-      ${r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
+      ${kept ? '' : r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
     </div>`;
   }).join('');
   const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
@@ -266,9 +275,48 @@ async function planAll() {
   const step = (pass, i, m) => ($('#status').textContent = `${pass} — ${i + 1}/${ms.length}: ${m.name}…`);
   const pass1 = new Map(), results = [];
 
+  // Already meeting its target with the modules installed now (same bay, Blast if asked for): keep it
+  // exactly as it is and reserve its modules, so nothing gets swapped around for no gain.
+  const sameModule = (g, mod) => { const { count, where, ...a } = g; return JSON.stringify(a) === JSON.stringify(mod); };
+  const meetsNow = m => {
+    const c = m.current, g = gm(m), mins = effectiveMins(m);
+    if (!c || !c.installed.length || (c.stage !== undefined && c.stage !== m.stage)) return false;
+    if (mins.every(v => v === null)) return !m.userTarget; // no target to reach and you set none: leave it alone
+    if (!mins.every((v, k) => v === null || c.totals[k] >= v)) return false;
+    return !(g.option && m[g.option.key] && !c.installed.some(x => x.module.name.startsWith(g.option.module)));
+  };
+  const kept = new Map();
+  for (const m of ms) {
+    if (!meetsNow(m)) continue;
+    const placements = m.current.installed.map(x => ({ id: S.pool.findIndex(g => sameModule(g, x.module)), cells: x.cells }));
+    if (placements.some(p => p.id < 0)) continue; // a module the pool does not know: plan it normally
+    kept.set(m.key, { found: true, placements });
+  }
+  // Spare modules in a kept machine: ones it can give up and still meet every minimum (job deadline
+  // included), with no prioritised stat getting worse. Other machines may use them; unused ones stay put.
+  const byIdAll = Object.fromEntries(typesOf(S.pool).map(t => [t.id, t]));
+  const noImpact = (m, before, after) => {
+    const mins = effectiveMins(m);
+    return [0, 1, 2].every(k => (mins[k] !== null ? after[k] >= mins[k] : !m.priority.includes(k) || after[k] >= before[k]));
+  };
+  const spares = new Map(); // machine key -> indexes into its kept placements
+  for (const [key, r] of kept) {
+    const m = ms.find(x => x.key === key), grid = gridOf(layoutOf(m)), list = [];
+    spares.set(key, list);
+    if (effectiveMins(m).every(v => v === null) && m.priority.every(v => v === null)) continue; // nothing says what matters: touch nothing
+    const before = evaluate(grid, r.placements, byIdAll).totals;
+    let left = r.placements.map((p, i) => ({ ...p, i }));
+    for (const p of [...left].sort((a, b) => costOf(S.pool[b.id]) - costOf(S.pool[a.id]))) { // most useful to others first
+      const trial = left.filter(x => x !== p);
+      if (noImpact(m, before, evaluate(grid, trial, byIdAll).totals)) { left = trial; list.push(p.i); }
+    }
+  }
+  for (const [key, r] of kept) take(r.placements.filter((p, i) => !spares.get(key).includes(i)), 1);
+
   // Pass 1: meet each target with the cheapest modules that do it. Targets you set go first (in rank
   // order), then the imported "keep what it does now" defaults, so a default never blocks your choice.
-  const targetOrder = [...ms.filter(m => m.userTarget), ...ms.filter(m => !m.userTarget)];
+  const toPlan = ms.filter(m => !kept.has(m.key));
+  const targetOrder = [...toPlan.filter(m => m.userTarget), ...toPlan.filter(m => !m.userTarget)];
   for (const [i, m] of targetOrder.entries()) {
     const mins = effectiveMins(m);
     if (mins.every(v => v === null)) continue;
@@ -279,6 +327,7 @@ async function planAll() {
   }
   // Pass 2: each machine, in order, keeps its target and maximises its priorities with what is left.
   for (const [i, m] of ms.entries()) {
+    if (kept.has(m.key)) { results.push({ m, r: kept.get(m.key), unreachable: false, kept: true }); continue; }
     const p1 = pass1.get(m.key), unreachable = p1 === null, weights = priorityWeights(m.priority);
     // A job deadline is a stop point: once it is met, spare modules do not go into more Performance here.
     if (!unreachable && jobPerformance(m) !== null) weights[0] = 0;
@@ -295,6 +344,20 @@ async function planAll() {
     }
     if (r) take(r.placements, 1);
     results.push({ m, r, unreachable });
+  }
+  const spareLeft = {};
+  for (const [key, list] of spares) for (const i of list) { const id = kept.get(key).placements[i].id; spareLeft[id] = (spareLeft[id] || 0) + 1; }
+  for (const id of Object.keys(spareLeft)) {
+    let used = Math.max(0, spareLeft[id] - avail[id]); // spares the other machines needed
+    avail[id] -= spareLeft[id] - used; // the unused spares stay in their machines
+    for (const x of [...results].reverse()) {
+      if (!x.kept || used <= 0) continue;
+      const give = spares.get(x.m.key).filter(i => x.r.placements[i].id === +id && used > 0 && used--);
+      if (!give.length) continue;
+      x.r.gave = [...(x.r.gave || []), ...give.map(i => x.r.placements[i])];
+      x.r.placements = x.r.placements.filter((p, i) => !give.includes(i));
+      spares.set(x.m.key, spares.get(x.m.key).filter(i => !give.includes(i)).map(i => i - give.filter(g => g < i).length));
+    }
   }
   plan = { results, avail, types: typesOf(S.pool), pool: S.pool, at: Date.now() };
   // Keep a compact copy for overlay.html.
@@ -320,7 +383,7 @@ async function importSave(file) {
   if (!same && S.machines.length && !confirm('This looks like a different save. Replace the current machines and module pool with the ones from it?')) return;
   const fromSave = (x, m) => {
     const g = GAME.machines[x.gameIndex];
-    Object.assign(m, { name: x.name, stage: x.stage, missing: false, current: { totals: x.totals, job: x.job, installed: x.installed } });
+    Object.assign(m, { name: x.name, stage: x.stage, missing: false, current: { totals: x.totals, job: x.job, installed: x.installed, stage: x.stage } });
     if (m.userTarget) return m;
     // Default targets: keep what the machine does now, for the stats that matter on it
     // (Performance/Quality; Efficiency only lowers power use, so it is left free).
