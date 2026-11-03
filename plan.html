@@ -96,6 +96,10 @@ const gm = m => GAME.machines[m.gameIndex];
 const handsOff = m => m.locked || m.working;
 const layoutOf = m => GAME.bays[gm(m).bay][m.stage].layout;
 const accepts = (m, g) => g.node || gm(m).accepts.includes(g.type || 'universal');
+// Growing drugs: the Dream Cap Neutralizer makes Dream Caps edible (not contraband) and stops Dream Cap Mush (PlantList, PlantTraitList).
+const DRUG_BREAKERS = ['Dream Cap Neutralizer'];
+const banned = m => (gm(m).id === 'hydroponic' && m.drugs !== false ? DRUG_BREAKERS : []);
+const allowed = (m, g) => accepts(m, g) && !banned(m).some(n => g.name.startsWith(n));
 const machineName = uid => (S.machines.find(m => String(m.uid) === String(uid)) || {}).name || `machine #${uid}`;
 // How much a module is worth keeping free: its positive stats, plus 1 so fewer modules is better.
 // Learning Algorithm modules count at their fully grown stats: that is what they are worth.
@@ -129,7 +133,7 @@ function jobPerformance(m) {
 }
 
 // Modules this machine must have installed: the Furnace's Blast if ticked, plus what the chosen recipe needs.
-const neededNames = m => [...(gm(m).options || []).filter(o => m[o.key]).map(o => o.module), ...(m.job?.needs || [])];
+const neededNames = m => [...(gm(m).options || []).filter(o => m[o.key]).map(o => o.module), ...(m.job?.needs || []), ...(m.force || [])];
 const owns = name => S.pool.some(g => g.count > 0 && g.name.startsWith(name));
 
 function jobHtml(m) {
@@ -183,12 +187,22 @@ function renderMachines() {
       </div>
       ${jobHtml(m)}
       ${g.options ? `<div style="margin:4px 0">${g.options.length > 1 ? '<span class="muted">Modules you want in it (the layout is built around them):</span>' : ''}${optionsHtml(g, m, `data-k="${m.key}"`, n => owns(n) || !S.pool.length)}</div>` : ''}
+      ${forceHtml(m)}
       <div class="row stack" style="margin:4px 0 0">
         ${['1st', '2nd', '3rd'].map((label, r) => `<label>Then ${label}<select data-k="${m.key}" data-f="prio${r}"><option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${m.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('')}
       </div>
       <p class="hint" style="margin:6px 0 0">${esc(g.stats)}</p>
     </div>`;
   }).join('') || '<p class="hint">Import your save, or add machines by hand.</p>';
+}
+
+// Hydroponics: grow drugs or not. Any machine: modules you want in it whatever the solver thinks.
+function forceHtml(m) {
+  const drugs = gm(m).id === 'hydroponic' ? `<label style="display:block;margin:2px 0;font-size:12px"><input type="checkbox" data-k="${m.key}" data-f="drugs" ${m.drugs !== false ? 'checked' : ''}> Grow drugs: never use the Dream Cap Neutralizer (it makes Dream Caps edible, not contraband, and stops Dream Cap Mush)</label>` : '';
+  const force = m.force || [];
+  const names = [...new Set(S.pool.filter(g => g.count > 0 && allowed(m, g)).map(g => g.name))].filter(n => !force.includes(n));
+  const list = force.map((n, i) => `<span class="ok" style="font-size:12px;margin-right:8px">${esc(n)}${owns(n) || !S.pool.length ? '' : ' <span class="bad">(you own none)</span>'} <button data-k="${m.key}" data-act="unforce" data-n="${i}" title="Stop forcing it">✕</button></span>`).join('');
+  return `<div style="margin:4px 0">${drugs}<label style="font-size:12px">Force include <select data-k="${m.key}" data-f="forceAdd"><option value="">add a module…</option>${names.map(n => `<option>${esc(n)}</option>`).join('')}</select></label> ${list}</div>`;
 }
 
 function renderPool() {
@@ -318,13 +332,13 @@ async function planAll() {
   const growth = (g, weights) => (!weights || g.node || !g.learnMax ? 0 : grownBase(g).reduce((s, v, k) => s + weights[k] * (v - g.base[k]), 0));
   const typesFor = (m, costScale, weights) => S.pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
     node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback,
-    count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) - growth(g, weights) }));
+    count: allowed(m, g) ? avail[id] : 0, cost: costScale * costOf(g) - growth(g, weights) }));
   const budget = Math.max(1, S.seconds) * 1000;
   // A machine option (Furnace: Blast) makes the layout include that module, if one is still free.
   const required = m => {
     const ids = [];
     for (const name of neededNames(m)) {
-      const i = S.pool.findIndex((g, j) => !ids.includes(j) && accepts(m, g) && avail[j] > 0 && g.name.startsWith(name));
+      const i = S.pool.findIndex((g, j) => !ids.includes(j) && allowed(m, g) && avail[j] > 0 && g.name.startsWith(name));
       if (i >= 0) ids.push(i);
     }
     return ids.length ? ids : null;
@@ -356,7 +370,7 @@ async function planAll() {
     const installed = m.current.installed.map(x => ({ id: S.pool.findIndex(g => sameModule(g, x.module)), cells: x.cells }));
     const need = {};
     for (const p of installed) need[p.id] = (need[p.id] || 0) + 1;
-    if (installed.every(p => p.id >= 0) && Object.entries(need).every(([id, n]) => avail[id] >= n)) {
+    if (installed.every(p => p.id >= 0 && allowed(m, S.pool[p.id])) && Object.entries(need).every(([id, n]) => avail[id] >= n)) {
       const t = evaluate(grid, installed, typesById).totals;
       if (t.every((v, k) => v >= base[k])) return { ...r, placements: installed };
     }
@@ -374,6 +388,7 @@ async function planAll() {
   const meetsNow = m => {
     const c = m.current, g = gm(m), mins = effectiveMins(m);
     if (!c || !c.installed.length || (c.stage !== undefined && c.stage !== m.stage)) return false;
+    if (!c.installed.every(x => allowed(m, x.module))) return false; // e.g. a Neutralizer in a drug grower: re-plan it
     if (mins.every(v => v === null)) return !m.userTarget; // no target to reach and you set none: leave it alone
     if (!mins.every((v, k) => v === null || c.totals[k] >= v)) return false;
     return neededNames(m).every(name => c.installed.some(x => x.module.name.startsWith(name)));
@@ -569,6 +584,11 @@ document.addEventListener('click', e => {
     stopped = true; if (worker) worker.terminate();
     $('#status').textContent = 'Stopped.'; $('#solve').disabled = false; $('#stop').disabled = true;
   }
+  else if (d.act === 'unforce') {
+    const m = S.machines.find(x => x.key === d.k);
+    m.force.splice(+d.n, 1);
+    outdated('Settings changed since this plan. Plan again to update it.'); render();
+  }
   else if (d.act) {
     const i = S.machines.findIndex(m => m.key === d.k);
     if (d.act === 'remove') S.machines.splice(i, 1);
@@ -623,6 +643,8 @@ document.addEventListener('change', e => {
   if (f === 'preset' || f.startsWith('min') || f.startsWith('job')) m.userTarget = true;
   if (f === 'include') m.include = t.checked;
   else if (f === 'locked') m.locked = t.checked;
+  else if (f === 'drugs') m.drugs = t.checked;
+  else if (f === 'forceAdd') { if (t.value) { m.force = [...(m.force || []), t.value]; m.userTarget = true; } }
   else if (f === 'stage') m.stage = +t.value;
   else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));
   else if (f.startsWith('min')) m.mins[+f.slice(3)] = num();
