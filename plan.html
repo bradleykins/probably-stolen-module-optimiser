@@ -200,8 +200,10 @@ function renderMachines() {
 function forceHtml(m) {
   const drugs = gm(m).id === 'hydroponic' ? `<label style="display:block;margin:2px 0;font-size:12px"><input type="checkbox" data-k="${m.key}" data-f="drugs" ${m.drugs !== false ? 'checked' : ''}> Grow drugs: never use the Dream Cap Neutralizer (it makes Dream Caps edible, not contraband, and stops Dream Cap Mush)</label>` : '';
   const force = m.force || [];
-  const names = [...new Set(S.pool.filter(g => g.count > 0 && allowed(m, g)).map(g => g.name))].filter(n => !force.includes(n));
+  // Only this machine's own kind of module (e.g. Hydroponic modules), not universal ones or nodes.
+  const names = [...new Set(S.pool.filter(g => g.count > 0 && !g.node && (g.type || 'universal') !== 'universal' && allowed(m, g)).map(g => g.name))].filter(n => !force.includes(n));
   const list = force.map((n, i) => `<span class="ok" style="font-size:12px;margin-right:8px">${esc(n)}${owns(n) || !S.pool.length ? '' : ' <span class="bad">(you own none)</span>'} <button data-k="${m.key}" data-act="unforce" data-n="${i}" title="Stop forcing it">✕</button></span>`).join('');
+  if (!names.length && !force.length) return drugs ? `<div style="margin:4px 0">${drugs}</div>` : '';
   return `<div style="margin:4px 0">${drugs}<label style="font-size:12px">Force include <select data-k="${m.key}" data-f="forceAdd"><option value="">add a module…</option>${names.map(n => `<option>${esc(n)}</option>`).join('')}</select></label> ${list}</div>`;
 }
 
