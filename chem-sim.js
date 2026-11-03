@@ -38,14 +38,17 @@ const CHEM = (() => {
   const IMPURITIES = ['chemical_contaminant', 'physical_contaminant', 'microbe', 'heavy_metal'];
 
   const PRODUCTS = {
-    dream_dust: { name: 'Dream Dust', active: 'dream_cap_extract', volume: 2000 },
-    nightmare_dust: { name: 'Nightmare Dust', active: 'nightmare_extract', volume: 4000 },
-    caffeine_pill: { name: 'Caffeine Pill', active: 'caffeine', volume: 5000 },
-    fanta_pill: { name: 'Fanta Pill', active: 'fanta', volume: 500 },
-    pink_alt_injector: { name: 'Pink Alt Injector', active: 'nomore', volume: 4000 },
+    // value: base sale value (MedsItemDirectory unitValue)
+    dream_dust: { name: 'Dream Dust', active: 'dream_cap_extract', volume: 2000, value: 18 },
+    nightmare_dust: { name: 'Nightmare Dust', active: 'nightmare_extract', volume: 4000, value: 36 },
+    caffeine_pill: { name: 'Caffeine Pill', active: 'caffeine', volume: 5000, value: 10 },
+    fanta_pill: { name: 'Fanta Pill', active: 'fanta', volume: 500, value: 12 },
+    pink_alt_injector: { name: 'Pink Alt Injector', active: 'nomore', volume: 4000, value: 50 },
   };
-  const GRADES = [[99, 'Lab Pure'], [90, 'Pharma Grade'], [80, 'Near Pharma'], [60, 'Street Standard'], [45, 'Cut Product'], [30, 'Junk Grade'], [0, 'Starch Grade']];
+  // [min purity, name, % added to the sale value] (ItemConditionList modValue)
+  const GRADES = [[99, 'Lab Pure', 135], [90, 'Pharma Grade', 85], [80, 'Near Pharma', 40], [60, 'Street Standard', 0], [45, 'Cut Product', -45], [30, 'Junk Grade', -75], [0, 'Starch Grade', -95]];
   const grade = purity => GRADES.find(([p]) => purity >= p)[1];
+  const unitValue = (product, purity) => PRODUCTS[product].value * (1 + GRADES.find(([p]) => purity >= p)[2] / 100);
   const BLENDER_LOSS = [35, 20, 10, 5, 0];   // % lost, by Chemical Equipment Modules installed (0-4)
   const FINISHER_LOSS = [12, 6, 3, 1, 0];
 
@@ -274,7 +277,7 @@ const CHEM = (() => {
     return best;
   }
 
-  return { maxSafeTemp, LIQUIDS, ITEMS, PRODUCTS, GRADES, BLENDER_LOSS, FINISHER_LOSS, grade, run, STEPS, tick, newContainer };
+  return { maxSafeTemp, LIQUIDS, ITEMS, PRODUCTS, GRADES, unitValue, BLENDER_LOSS, FINISHER_LOSS, grade, run, STEPS, tick, newContainer };
 })();
 
 if (typeof module !== 'undefined') module.exports = CHEM;

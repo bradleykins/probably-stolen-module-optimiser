@@ -14,6 +14,9 @@
 .recipe b { display: block; margin-bottom: 4px; }
 .recipe ol { margin: 4px 0; padding-left: 18px; }
 nav a { color: var(--accent); }
+.scroll { overflow-x: auto; }
+table.t td, table.t th { padding: 2px 10px 2px 0; text-align: left; font-size: 13px; white-space: nowrap; }
+table.t th { color: var(--muted); font-weight: 600; }
 @media (min-width: 760px) { main { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); } }
 </style>
 </head>
@@ -313,11 +316,29 @@ function recipeHtml(product, goal, e, pure) {
   </div>`;
 }
 
+// Bought inputs: Restricted Chemical Supplies (value 100) unpack into 2 precursor bottles and 1 reducing agent (MaterialDirectory).
+const INPUT_COST = { fanta_precursor: 50 };
+// Which product earns the most per input item, each made with its best recipe at your setup.
+function focusHtml(results) {
+  if (!results) return '';
+  const rows = Object.keys(CHEM.PRODUCTS).map(id => {
+    const r = results[id].best.r, T = TEMPLATES[id], each = CHEM.unitValue(id, r.purity);
+    const input = T.unit === 'bottle' ? 'precursor bottle' : CHEM.ITEMS[T.input].name;
+    const cost = INPUT_COST[T.input] || 0;
+    return { id, r, each, batch: each * r.units, perInput: (each * r.units) / S.batch - cost, cost, input };
+  }).sort((a, b) => b.perInput - a.perInput);
+  const top = rows[0], name = id => CHEM.PRODUCTS[id].name;
+  return `<div class="ccard" style="grid-column:1/-1"><h4>What to focus on</h4>
+    <p class="ok"><b>Make ${esc(name(top.id))}</b>: ${Math.round(top.perInput)} profit per ${esc(top.input)} (${top.r.units} × ${Math.round(top.each)} from ${S.batch}, ${top.r.grade}).</p>
+    <div class="scroll"><table class="t"><tr><th>Product</th><th>Grade</th><th>Each</th><th>From ${S.batch} inputs</th><th>Input cost</th><th>Profit per input</th><th>Input</th></tr>${rows.map(x => `<tr><td>${esc(name(x.id))}</td><td>${x.r.grade}</td><td>${Math.round(x.each)}</td><td>${Math.round(x.batch)}</td><td>${x.cost || 'grown'}</td><td>${Math.round(x.perInput)}</td><td>${esc(x.input)}</td></tr>`).join('')}</table></div>
+    <p class="hint">Sale value = base value (Dream Dust 18, Nightmare Dust 36, Caffeine Pill 10, Fanta Pill 12, Pink Alt Injector 50) plus the grade bonus (Lab Pure +135%, Pharma +85%, Near Pharma +40%, Street Standard 0, Cut −45%, Junk −75%, Starch −95%). Uses each product's purest recipe. Precursor bottles cost about 50 each (Restricted Chemical Supplies, value 100, give 2 plus a reducing agent); plants are grown, so they count as free. Does not count alcohol, acid, base, filters, or buyer demand.</p></div>`;
+}
+
 function render(results) {
   save();
   for (const id of ['blender', 'plate', 'finisher', 'evapP', 'batch']) $('#' + id).value = S[id];
   $('#minGrade').innerHTML = CHEM.GRADES.filter(([p]) => p > 0).map(([p, name]) => `<option value="${p}" ${S.minGrade === p ? 'selected' : ''}>${name} (${p}%+)</option>`).join('');
-  $('#products').innerHTML = Object.entries(CHEM.PRODUCTS).map(([id, P]) => `<div class="ccard"><h4>${P.name}</h4>
+  $('#products').innerHTML = focusHtml(results) + Object.entries(CHEM.PRODUCTS).map(([id, P]) => `<div class="ccard"><h4>${P.name}</h4>
     <div class="muted">Active ingredient: ${P.active.replace(/_/g, ' ')} · ${mL(P.volume)} per unit</div>
     ${results?.[id] ? `<div class="recipes">${Object.keys(GOALS).map(g => recipeHtml(id, g, results[id][g], results[id].best)).join('')}</div>${Object.keys(GOALS).every(g => g === 'best' || !worthIt(g, results[id][g], results[id].best)) ? '<p class="muted">No other recipe is worth it: none gives 10% more product (at your lowest grade or better) or fewer drying nights.</p>' : ''}` : '<p class="hint">Press "Work out recipes".</p>'}</div>`).join('');
 }
