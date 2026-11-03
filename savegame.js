@@ -2,19 +2,22 @@
 // The save is Easy Save 3 text. Game items sit inside it as JSON strings, sometimes nested.
 
 function readSaveItems(text) {
+  // uuid is only unique within one JSON chunk (each nested save string numbers its own), so each item
+  // remembers its chunk in _scope, and uuid lookups use `${_scope}:${uuid}`.
   const items = new Map(); // uniqueId -> item, so an item seen twice counts once
-  function walk(o) {
+  let chunks = 0;
+  function walk(o, sc) {
     if (!o || typeof o !== 'object') return;
-    if (typeof o.identifier === 'string' && Array.isArray(o._keys)) items.set(o.uniqueId, o);
+    if (typeof o.identifier === 'string' && Array.isArray(o._keys)) items.set(o.uniqueId, Object.assign(o, { _scope: sc }));
     for (const v of Object.values(o)) {
-      if (typeof v !== 'string') walk(v);
+      if (typeof v !== 'string') walk(v, sc);
       else if (v.length > 50 && v.includes('"identifier"')) parseOrScan(v);
     }
   }
   function parseOrScan(s) {
     let o;
     try { o = JSON.parse(s); } catch { return scan(s); }
-    walk(o);
+    walk(o, ++chunks);
   }
   // The outer file is not strict JSON, so look for string literals that hold item JSON.
   function scan(s) {
@@ -76,7 +79,8 @@ function placedCells(s, cols) {
 // machines: those GAME knows: {uid, gameIndex, name, stage, totals, job, installed: [{module, cells}]}.
 function readSave(text, GAME) {
   const items = readSaveItems(text);
-  const byUuid = new Map(items.map(o => [o.uuid, o]));
+  const ref = (o, u) => `${o._scope}:${u}`;
+  const byUuid = new Map(items.map(o => [ref(o, o.uuid), o]));
 
   const machines = [], placeOf = new Map(); // module uniqueId -> machine uid
   for (const o of items) {
@@ -87,7 +91,7 @@ function readSave(text, GAME) {
     // Machine windows list power first, then the module bay: bay items have inventory index 3.
     // (The 3D Printer keeps spare modules in its chip storage, index 4; those are not installed.)
     const bayItems = (o.childItems || []).filter((u, i) => (o.childItemInventoryNode || [])[i] === 3);
-    const installed = bayItems.map(u => byUuid.get(u)).filter(c => c && isModuleItem(c)).map(c => {
+    const installed = bayItems.map(u => byUuid.get(ref(o, u))).filter(c => c && isModuleItem(c)).map(c => {
       placeOf.set(c.uniqueId, o.uniqueId);
       return { module: moduleEntry(c, GAME.effects), cells: placedCells(c.itemModifiedShape, cols) };
     });
@@ -107,9 +111,9 @@ function readSave(text, GAME) {
 
   // Where a loose module lies: the nearest container that is not the save's hidden bag (a room, a box...).
   const parentOf = new Map();
-  for (const o of items) (o.childItems || []).forEach(u => parentOf.set(u, o));
+  for (const o of items) (o.childItems || []).forEach(u => parentOf.set(ref(o, u), o));
   const looseIn = o => {
-    for (let p = parentOf.get(o.uuid); p; p = parentOf.get(p.uuid)) if (!/hidden save bag/i.test(p.name || '')) return `${p.name || p.identifier} #${p.uniqueId}`;
+    for (let p = parentOf.get(ref(o, o.uuid)); p; p = parentOf.get(ref(p, p.uuid))) if (!/hidden save bag/i.test(p.name || '')) return `${p.name || p.identifier} #${p.uniqueId}`;
     return 'outside any room';
   };
   const groups = new Map();
