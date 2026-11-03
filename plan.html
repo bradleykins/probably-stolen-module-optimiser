@@ -310,6 +310,41 @@ async function planAll() {
   // Already meeting its target with the modules installed now (same bay, Blast if asked for): keep it
   // exactly as it is and reserve its modules, so nothing gets swapped around for no gain.
   const sameModule = (g, mod) => { const { count, where, ...a } = g; return JSON.stringify(a) === JSON.stringify(mod); };
+  // A layout and its mirror images can score the same. Keep the version closest to what is installed now
+  // (most modules already in the right cells), so a plan is never just your layout flipped over.
+  // Mirroring left-right or top-bottom flips the modules too, so those need "Allow mirroring"; 180° does not.
+  const typesById = Object.fromEntries(typesOf(S.pool).map(t => [t.id, t]));
+  const cellKey = cells => cells.slice().sort((a, b) => a - b).join();
+  function alignToCurrent(m, r) {
+    if (!r || !r.placements.length || !m.current?.installed.length) return r;
+    const grid = gridOf(layoutOf(m)), { rows, cols } = grid, N = rows * cols;
+    const now = m.current.installed.map(x => ({ id: S.pool.findIndex(g => sameModule(g, x.module)), key: cellKey(x.cells) }));
+    const overlap = pl => pl.filter(p => now.some(n => n.id === p.id && n.key === cellKey(p.cells))).length;
+    const base = evaluate(grid, r.placements, typesById).totals;
+    const at = i => [Math.floor(i / cols), i % cols];
+    const transforms = [
+      ...(S.flip ? [i => { const [y, x] = at(i); return y * cols + (cols - 1 - x); }, i => { const [y, x] = at(i); return (rows - 1 - y) * cols + x; }] : []),
+      i => N - 1 - i,
+    ];
+    // What is installed now, if it is at least as good on every stat (and its modules are still free): no change at all.
+    const installed = m.current.installed.map(x => ({ id: S.pool.findIndex(g => sameModule(g, x.module)), cells: x.cells }));
+    const need = {};
+    for (const p of installed) need[p.id] = (need[p.id] || 0) + 1;
+    if (installed.every(p => p.id >= 0) && Object.entries(need).every(([id, n]) => avail[id] >= n)) {
+      const t = evaluate(grid, installed, typesById).totals;
+      if (t.every((v, k) => v >= base[k])) return { ...r, placements: installed };
+    }
+    let best = r.placements, bestOverlap = overlap(best);
+    for (const t of transforms) {
+      if (!grid.usable.every((u, i) => u === grid.usable[t(i)])) continue;
+      const moved = r.placements.map(p => ({ id: p.id, cells: p.cells.map(t) }));
+      const totals = evaluate(grid, moved, typesById).totals;
+      if (totals.some((v, k) => v < base[k])) continue; // never worse (e.g. a Side Mount leaving the left edge)
+      const o = overlap(moved);
+      if (o > bestOverlap) { best = moved; bestOverlap = o; }
+    }
+    return best === r.placements ? r : { ...r, placements: best };
+  }
   const meetsNow = m => {
     const c = m.current, g = gm(m), mins = effectiveMins(m);
     if (!c || !c.installed.length || (c.stage !== undefined && c.stage !== m.stage)) return false;
@@ -380,6 +415,7 @@ async function planAll() {
       if (stopped) return;
       if (r2.found) r = r2;
     }
+    r = alignToCurrent(m, r);
     if (r) take(r.placements, 1);
     results.push({ m, r, unreachable });
   }
