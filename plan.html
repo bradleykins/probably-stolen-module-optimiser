@@ -304,7 +304,9 @@ function learnHtml(pool) {
   const row = g => {
     const left = cyclesToGrow([g]);
     const stats = g.learnMax.map((v, k) => (v > 0 ? `${STATS[k]} ${g.base[k]} / ${v}` : '')).filter(Boolean).join(', ');
-    return `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)}${g.count > 1 ? ` ×${g.count}` : ''}: ${stats} ${left ? `<span class="muted">(${left} working night${left === 1 ? '' : 's'} to max)</span>` : '<span class="ok">(maxed)</span>'}</li>`;
+    const at = [...Object.entries(g.where || {}).filter(([u]) => u !== '0').map(([u, n]) => `${n > 1 ? n + ' in ' : 'in '}${machineName(u)}`),
+      ...[...new Set(g.looseIn || [])].map(s => `loose in ${s}`)].join('; ');
+    return `<li>${shapeMini(g.cells, moduleColor(g))}<b>${esc(g.name)}</b>${g.count > 1 ? ` ×${g.count}` : ''}: ${stats} ${left ? `<span class="muted">(${left} working night${left === 1 ? '' : 's'} to max)</span>` : '<span class="ok">(maxed)</span>'}<br><span class="muted">${esc(shapeName(g.cells))} · ${esc(at || 'location unknown')}</span></li>`;
   };
   return `<div class="mcard"><h4>Learning Algorithm max levels</h4><p class="muted">Each positive stat starts at 0 and grows +1 on every night its machine works, up to 2x the module's stat. Negative stats never change. Shown as now / max.</p><ul class="plain">${mods.map(row).join('')}</ul></div>`;
 }

@@ -15,7 +15,8 @@ function shapeName(cells) {
   if (typeof GAME === 'undefined' || typeof solverModule === 'undefined') return fallback;
   const { orientations } = solverModule();
   const keys = new Set(orientations(cells, true, true).map(o => JSON.stringify(o)));
-  const named = [...GAME.variants.basic, ...GAME.variants.advanced].map(v => [v.name.replace(/ \(.*\)$/, ''), cellsOf(v.shape)]);
+  // Names by what the shape looks like (the game has no names for them).
+  const named = [['Square', ['##', '##']], ['T', ['.#', '##', '.#']], ['L', ['###', '..#']], ['small L', ['##', '.#']], ['C', ['##', '.#', '##']], ['P', ['##', '##', '.#']]].map(([n, s]) => [n, cellsOf(s)]);
   for (const [name, shape] of named) if (keys.has(JSON.stringify(orientations(shape, false, false)[0]))) return `${name} shape`;
   const rows = new Set(cells.map(c => c[0])).size, cols = new Set(cells.map(c => c[1])).size;
   return rows * cols === cells.length ? `${Math.max(rows, cols)}×${Math.min(rows, cols)} bar` : fallback;
@@ -50,7 +51,13 @@ function moduleColor(m) {
   return c.length > 1 ? `linear-gradient(135deg, ${c[0]} 55%, ${c[1]} 55%)` : c[0];
 }
 const statsHtml = base => base.map((v, k) => (v ? statSpan(k, `${'PEQ'[k]}${fmt(v)}`) : '')).filter(Boolean).join(' ') || 'no stats';
-const moduleDetailsHtml = m => `${esc(shapeName(m.cells))} · ${m.node ? 'node (no own stats)' : statsHtml(m.base)}${m.learnMax ? ` <span class="muted">${esc(learnNote(m))}</span>` : ''}`;
+// Small block drawing of a module's shape as stored in the save (the game may show it rotated or mirrored).
+function shapeMini(cells, bg = 'currentColor') {
+  const rows = Math.max(...cells.map(c => c[0])) + 1, cols = Math.max(...cells.map(c => c[1])) + 1;
+  const on = new Set(cells.map(c => c[0] * cols + c[1]));
+  return `<span class="mini" title="${esc(shapeName(cells))}" style="grid-template-columns:repeat(${cols},7px)">${[...Array(rows * cols)].map((_, i) => (on.has(i) ? `<i style="background:${bg}"></i>` : '<i></i>')).join('')}</span>`;
+}
+const moduleDetailsHtml = m => `${shapeMini(m.cells, moduleColor(m))}${esc(shapeName(m.cells))} · ${m.node ? 'node (no own stats)' : statsHtml(m.base)}${m.learnMax ? ` <span class="muted">${esc(learnNote(m))}</span>` : ''}`;
 const totalsHtml = totals => STATS.map((s, k) => statSpan(k, `${s} ${fmt(totals[k])}%`)).join(' · ');
 const legendHtml = () => `<div class="legend">${STATS.map((s, k) => `<span><span class="swatch" style="background:${STAT_COLORS[k]}"></span>${s}</span>`).join('')}<span><span class="swatch" style="background:var(--node)"></span>Node</span><span><span class="swatch" style="background:var(--nostat)"></span>No bonus</span></div>`;
 
