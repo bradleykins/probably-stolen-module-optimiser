@@ -150,10 +150,12 @@ const TEMPLATES = {
 // Three goals: purity first; most units per input item above the chosen grade; fewest nights, then seconds, above it.
 // The grade threshold a purity reaches (99, 90, 80, ...), so purity within one grade does not count.
 const gradeFloor = purity => Math.max(0, ...CHEM.GRADES.map(([p]) => p).filter(p => purity >= p));
-// Last tie-break: pour less (e.g. alcohol beyond 5× the mush changes nothing), then a touch more purity.
-// Litres poured × 10 stays under one drying night (1e3), so it only decides between otherwise equal recipes.
 let topGrade = 101; // the best grade this product can reach; set per product in optimiseAll
-const thrift = r => -r.poured / 1e6 * 10 + r.purity / 1e4;
+// Ties (same grade, units and nights): keep the most active ingredient first, so the search never throws away
+// extract to save alcohol just because the unit count rounds down the same; then pour less (alcohol beyond 5×
+// the mush changes nothing); then a touch more purity. mL of active (≤ ~650) stays under one drying night
+// (1e3); litres poured count 0.5 each, so even 0.1 mL of extract outweighs 100 mL of extra pouring.
+const thrift = r => r.active / 1e3 - r.poured / 1e6 * 0.5 + r.purity / 1e5;
 const GOALS = {
   // Ties (purity to 0.1%, same units) go to fewer drying nights, so it does not pour extra alcohol for nothing.
   // Main recipe: the best grade reachable, then the most units at that grade, then fewer drying nights.
@@ -223,9 +225,10 @@ function stepHtml(st) {
         const coffee = mush === 'coffee_mush';
         const r = got / b[mush];
         const rule = coffee ? 'Caffeine extraction already works at full strength from 0.75× the coffee mush.'
-          : r < 4.95 ? 'This is under 5×, so some mush turns into plant matter instead of extract; in exchange there is less to dry.'
+          : r < 4.95 ? `This is under 5×, so about ${Math.round((1 - r / 5) * 100)}% of the mush turns into plant matter instead of extract; in exchange there is less to dry.`
           : 'At 5× every bit of mush that is extracted counts fully.';
-        const tip = coffee ? '' : `<div class="hint">Less alcohol: the extraction needs alcohol at 5× the mush <i>currently</i> in the container and does not use it up. So add the blended mush in portions instead, heating each until the mush reads 0: with 25 mL portions, about ${mL(125000)} of alcohol in the container does the whole batch.</div>`;
+        // Portions only save alcohol when there is well over one 25 mL portion of mush.
+        const tip = coffee || b[mush] < 50000 ? '' : `<div class="hint">Less alcohol: the extraction needs alcohol at 5× the mush <i>currently</i> in the container and does not use it up. So instead of all ${mL(b[mush])} of mush at once, add it 25 mL at a time and heat each portion until the mush reads 0: about ${mL(125000)} of alcohol in the container (≈ ${mL(125000 / 0.7)} poured) does all ${Math.ceil(b[mush] / 25000)} portions.</div>`;
         return `Pour ${name} until the container shows <b>alcohol ${times(got, b[mush])} the ${liq(mush)}</b>: ${mL(b[mush])} of mush, so about ${mL(got)} of alcohol${bottle}. ${rule}${tip}`;
       }
       if (st.ratioOf === 'protein') return `Add <b>${name} ${st.ratio === 1 ? 'equal to the protein' : `${st.ratio}× the protein`}</b>: the container shows ${mL(b.protein)} of protein, so about ${mL(got)} of acid${bottle}.${st.ratio < 1 ? ' Leaving some protein in gives more units at lower purity.' : ''}`;
