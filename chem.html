@@ -36,6 +36,8 @@ nav a { color: var(--accent); }
     </div>
     <p class="hint">Modules are Chemical Equipment Modules (0-4). They cut Blender loss (35/20/10/5/0%), speed up the Heating Plate (×4 at 3, ×16 at 4) and cut Finisher loss (12/6/3/1/0%).
       The Finisher swaps its loss for contaminant, so Lab Pure (99%) needs 3+ Finisher modules. Shop bottles carry 2-8% random impurity; recipes use the 5% average.</p>
+    <div class="row"><button id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden><span id="importStatus" class="muted"></span></div>
+    <div id="evapNote"></div>
     <div class="row"><button class="primary" id="solve">Work out recipes</button><span id="status" class="muted"></span></div>
     <p class="hint">Not here: Zyanide and Birth Control Pills (no recipe in the game; their purity comes from the bought item).</p>
   </section>
@@ -45,6 +47,9 @@ nav a { color: var(--accent); }
   </section>
 </main>
 <script src="chem-sim.js"></script>
+<script src="game-data.js"></script>
+<script src="solver.js"></script>
+<script src="savegame.js"></script>
 <script src="ui.js"></script>
 <script>
 const KEY = 'ps-chem-v1';
@@ -338,6 +343,48 @@ document.addEventListener('change', e => {
   render();
 });
 $('#solve').addEventListener('click', solveAll);
+$('#importSave').addEventListener('click', () => $('#saveFile').click());
+$('#saveFile').addEventListener('change', e => { importSave(e.target.files[0]); e.target.value = ''; });
+
+// Import: module counts and Evaporator Performance from the save, then work out the recipes.
+async function importSave(file) {
+  if (!file) return;
+  try {
+    const { modules, machines, chem } = readSave(await file.text(), GAME);
+    const ev = machines.find(m => GAME.machines[m.gameIndex].id === 'evaporator');
+    Object.assign(S, { blender: chem.blender ?? S.blender, plate: chem.heating_plate ?? S.plate, finisher: chem.chem_finisher ?? S.finisher });
+    if (ev) S.evapP = ev.totals[0];
+    $('#importStatus').textContent = `Read ${file.name}: Blender ${S.blender}, Heating Plate ${S.plate}, Chem Finisher ${S.finisher} modules; Evaporator Performance ${fmt(S.evapP)}%${ev ? '' : ' (no Evaporator found, kept yours)'}.`;
+    $('#evapNote').innerHTML = ev ? evapHtml(ev, modules) : '';
+    render();
+    solveAll();
+  } catch (err) {
+    $('#importStatus').textContent = `Could not read ${file.name}: ${err.message}`;
+  }
+}
+
+// Can the Evaporator go faster? Re-solve its bay with what is installed plus your loose modules: most
+// Performance, keeping today's Quality (distillate recovered) and not dropping Efficiency further than needed.
+function evapHtml(ev, modules) {
+  const def = GAME.machines[ev.gameIndex], layout = GAME.bays[def.bay][ev.stage].layout;
+  const pool = modules.filter(g => (g.node || def.accepts.includes(g.type || 'universal')) && !/stuck/.test(g.name))
+    .map(g => ({ g, n: (g.where[ev.uid] || 0) + (g.where[0] || 0), here: g.where[ev.uid] || 0 })).filter(x => x.n > 0);
+  const types = pool.map(({ g, n }, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base, node: !!g.node,
+    receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback, count: n, cost: 0.001 }));
+  const { solve } = solverModule();
+  const r = solve(gridOf(layout), types, { weights: [1, 1e-3, 0], mins: [null, null, ev.totals[2]], rotate: true, flip: true, heuristicMs: 1000, timeLimitMs: 3000 });
+  const now = ev.totals;
+  if (!r.found || r.totals[0] <= now[0]) return `<p class="hint">Evaporator: ${totalsHtml(now)}. Your loose modules can't make it faster without losing distillate recovery.</p>`;
+  const used = {};
+  r.placements.forEach(p => (used[p.id] = (used[p.id] || 0) + 1));
+  const add = Object.entries(used).map(([id, k]) => [pool[id], k - Math.min(k, pool[id].here)]).filter(([, k]) => k > 0);
+  const out = Object.entries(pool).map(([id, x]) => [x, x.here - Math.min(x.here, used[id] || 0)]).filter(([, k]) => k > 0);
+  return `<div class="hint"><p>Evaporator can go faster: Performance ${fmt(now[0])}% → <b>${fmt(r.totals[0])}%</b> (${totalsHtml(r.totals)}), same distillate recovery.
+    Re-lay its bay as shown and use the "Evaporator Performance" box above to compare recipes.</p>
+    <div class="boards"><figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, pool.map(x => x.g), 26)}</figure></div>
+    <ul class="plain">${add.map(([x, k]) => `<li>Add ${esc(x.g.name)} ×${k} <span class="muted">— ${moduleDetailsHtml(x.g)} · loose in ${esc([...new Set(x.g.looseIn || ['storage'])].join(' or '))}</span></li>`).join('')}
+    ${out.map(([x, k]) => `<li>Take out ${esc(x.g.name)} ×${k}</li>`).join('')}</ul></div>`;
+}
 render();
 </script>
 </body>

@@ -143,7 +143,11 @@ function readSave(text, GAME) {
   const owned = items.filter(o => o._keys.includes('IS_OWNED_TAG'));
   const disks = owned.map(o => saveStr(o, 'DNA_DISK_TRAIT_STRING')).filter(Boolean);
   const precision = owned.map(o => saveStr(o, 'DNA_PRECISION_TRAIT_STRING')).filter(Boolean);
-  return { modules, machines, seeds: [...seedGroups.values()], disks, precision };
+  // Chemical Equipment Modules in each chem station (they sit in the station's module slots).
+  const chem = {};
+  for (const o of owned) if (['blender', 'heating_plate', 'chem_finisher'].includes(o.identifier))
+    chem[o.identifier] = Math.max(chem[o.identifier] || 0, (o.childItems || []).filter(u => byUuid.get(ref(o, u))?.identifier === 'chem_module').length);
+  return { modules, machines, seeds: [...seedGroups.values()], disks, precision, chem };
 }
 
 // Modules only, for the single-machine page.
