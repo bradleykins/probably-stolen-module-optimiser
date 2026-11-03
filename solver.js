@@ -91,7 +91,8 @@ function solverModule() {
   // opts: {weights: [p, e, q] (>= 0), mins: [p|null, e|null, q|null], rotate, flip, timeLimitMs}
   //   fixed: [{id, cells}] items already in place (they count, and the search fills around them)
   //   require: [id] a module type the layout must include (e.g. the Furnace's Blast module)
-  // Score = weights . totals - sum of cost of placed items (cost >= 0: keeps valuable modules free).
+  // Score = weights . totals - sum of cost of placed items. cost > 0 keeps valuable modules free; cost < 0 is a
+  // bonus for placing the module (e.g. the stats a Learning Algorithm module will still grow).
   // Returns {found, score, totals, placements: [{id, cells}], optimal, steps}
   function solve(grid, types, opts = {}) {
     if (opts.require?.length) return solveRequired(grid, types, opts);
@@ -121,7 +122,7 @@ function solverModule() {
       };
     });
     const helps = v => goals.some(g => dot(g, v) > 0);
-    const ms = all.filter(t => !t.node && (helps(t.ownOpt) || helps(t.pairUb)));
+    const ms = all.filter(t => !t.node && (helps(t.ownOpt) || helps(t.pairUb) || (t.cost || 0) < 0));
     const nodeTypes = ms.some(t => helps(t.pairUb)) ? all.filter(t => t.node) : [];
     const pr = K3.map(k => w[k] + (cons.includes(k) ? 10 : 0));
     ms.sort((a, b) => dot(pr, b.ownOpt) / b.size - dot(pr, a.ownOpt) / a.size); // try most useful first

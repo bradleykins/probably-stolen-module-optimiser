@@ -220,6 +220,14 @@ function renderVariants() {
   if (cat.variants && v !== '' && v < GAME.variants[cat.variants].length) $('#catVariant').value = v;
 }
 
+// Totals once the layout's Learning Algorithm modules have fully grown, and how many cycles that takes.
+function grownLine(r, grid) {
+  const cycles = cyclesToGrow(r.placements.map(p => r.mods[p.id]));
+  if (!cycles) return '';
+  const byId = Object.fromEntries(r.types.map(t => [t.id, { ...t, base: t.node ? t.base : grownBase(r.mods[t.id]) }]));
+  return `<p class="muted">Fully grown in about ${cycles} cycle${cycles === 1 ? '' : 's'}: ${totalsHtml(evaluate(grid, r.placements, byId).totals)}</p>`;
+}
+
 function renderResult() {
   const layout = bays()[S.stage].layout, g = gridOf(layout);
   const r = result && result.machine === S.machine && result.stage === S.stage ? result : null;
@@ -244,7 +252,7 @@ function renderResult() {
   }).join('');
   $('#result').innerHTML = `${board}${legendHtml()}
     ${r.note ? `<p class="${r.noteClass}">${esc(r.note)}</p>` : ''}
-    <table><tr><td colspan="2"><b>Totals</b></td></tr>${tot}</table>
+    <table><tr><td colspan="2"><b>Totals</b></td></tr>${tot}</table>${grownLine(r, g)}
     <table><tr><td colspan="2"><b>${esc(machine().name)}</b></td></tr>${readout}</table>
     <table><tr><td colspan="2"><b>Placed items</b> <span class="muted">(Performance / Efficiency / Quality, with bonuses)</span></td></tr>${rows}</table>`;
 }
@@ -252,8 +260,13 @@ function renderResult() {
 function solveNow() {
   const g = gridOf(bays()[S.stage].layout);
   const mods = structuredClone(S.modules);
+  // Learning Algorithm modules also earn what they will still grow (targets are checked on today's stats), so the
+  // layout fills up with them. Growth counts for prioritised stats and for stats with a minimum, except Quality
+  // on a machine where it only counts in whole steps (Furnace).
+  const w = weightsOf(), growW = w.map((x, k) => x || (S.mins[k] !== null && !(k === 2 && machine().qualityStep) ? Math.max(...w, 1) : 0));
   const types = mods.map((m, id) => ({ id, cells: m.cells, count: accepted(m) ? m.count : 0, base: m.node ? [0, 0, 0] : m.base,
-    node: !!m.node, receiver: !!m.receiver, top: !!m.top, side: !!m.side, feedback: !!m.feedback }));
+    node: !!m.node, receiver: !!m.receiver, top: !!m.top, side: !!m.side, feedback: !!m.feedback,
+    cost: m.node || !m.learnMax ? 0 : -grownBase(m).reduce((s, v, k) => s + growW[k] * (v - m.base[k]), 0) }));
   // A machine option (Furnace: Blast) makes the layout include that module.
   const need = requiredModules(machine(), S, mods.map((m, i) => ({ name: m.name, count: types[i].count }))).ids;
   const opts = { weights: weightsOf(), mins: S.mins.slice(), require: need.length ? need : null, rotate: S.rotate, flip: S.flip, heuristicMs: 5000, timeLimitMs: 60000 };

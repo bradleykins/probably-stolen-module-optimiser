@@ -24,8 +24,15 @@ function shapeName(cells) {
 // "T shape · P+19" style summary to find a module in the game: its shape and its non-zero base stats.
 function moduleDetails(m) {
   const stats = m.node ? 'node (no own stats)' : m.base.map((v, k) => (v ? `${'PEQ'[k]}${fmt(v)}` : '')).filter(Boolean).join(' ') || 'no stats';
-  return `${shapeName(m.cells)} · ${stats}`;
+  return `${shapeName(m.cells)} · ${stats}${learnNote(m)}`;
 }
+// Learning Algorithm note: what it still grows to, or that it is done.
+const learnNote = m => (!m.learnMax ? '' : m.learnMax.some((v, k) => v > m.base[k])
+  ? ` (learning, grows to ${m.learnMax.map((v, k) => (v ? `${'PEQ'[k]}+${v}` : '')).filter(Boolean).join(' ')})` : ' (learning, fully grown)');
+// A module's stats once its Learning Algorithm has fully grown (the same as now for other modules).
+const grownBase = m => (m.learnMax ? m.base.map((b, k) => (m.learnMax[k] > 0 ? m.learnMax[k] : b)) : m.base); // only positive stats grow; negative ones stay
+// Machine cycles until every Learning Algorithm module in a layout is fully grown (+1 per stat per cycle).
+const cyclesToGrow = mods => Math.max(0, ...mods.filter(m => m && m.learnMax).flatMap(m => m.learnMax.map((v, k) => v - m.base[k])));
 
 // Stat colours, the same everywhere (style.css): Performance red, Efficiency green, Quality yellow.
 const STAT_COLORS = ['var(--perf)', 'var(--eff)', 'var(--qual)'];
@@ -43,7 +50,7 @@ function moduleColor(m) {
   return c.length > 1 ? `linear-gradient(135deg, ${c[0]} 55%, ${c[1]} 55%)` : c[0];
 }
 const statsHtml = base => base.map((v, k) => (v ? statSpan(k, `${'PEQ'[k]}${fmt(v)}`) : '')).filter(Boolean).join(' ') || 'no stats';
-const moduleDetailsHtml = m => `${esc(shapeName(m.cells))} · ${m.node ? 'node (no own stats)' : statsHtml(m.base)}`;
+const moduleDetailsHtml = m => `${esc(shapeName(m.cells))} · ${m.node ? 'node (no own stats)' : statsHtml(m.base)}${m.learnMax ? ` <span class="muted">${esc(learnNote(m))}</span>` : ''}`;
 const totalsHtml = totals => STATS.map((s, k) => statSpan(k, `${s} ${fmt(totals[k])}%`)).join(' · ');
 const legendHtml = () => `<div class="legend">${STATS.map((s, k) => `<span><span class="swatch" style="background:${STAT_COLORS[k]}"></span>${s}</span>`).join('')}<span><span class="swatch" style="background:var(--node)"></span>Node</span><span><span class="swatch" style="background:var(--nostat)"></span>No bonus</span></div>`;
 

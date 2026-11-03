@@ -49,6 +49,10 @@ function moduleEntry(o, effects) {
     base: ['PERFORMANCE', 'EFFICIENCY', 'QUALITY'].map(s => saveInt(o, `BONUS_PERCENTAGE_${s}_INT`)),
   };
   for (const e of effs) if (e.flag) m[e.flag] = true;
+  // Learning Algorithm: each positive stat starts at 0 and grows +1 per machine cycle up to 2x the module's
+  // stat (ModuleEffectHelper.InitLearningAlgo / OnUsedLearningAlgo). learnMax = those caps.
+  const learnMax = ['PERFORMANCE', 'EFFICIENCY', 'QUALITY'].map(s => saveInt(o, `LEARNING_ALGO_MAX_${s}_INT`));
+  if (learnMax.some(v => v > 0)) m.learnMax = learnMax;
   return m;
 }
 

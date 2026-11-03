@@ -91,7 +91,8 @@ const layoutOf = m => GAME.bays[gm(m).bay][m.stage].layout;
 const accepts = (m, g) => g.node || gm(m).accepts.includes(g.type || 'universal');
 const machineName = uid => (S.machines.find(m => String(m.uid) === String(uid)) || {}).name || `machine #${uid}`;
 // How much a module is worth keeping free: its positive stats, plus 1 so fewer modules is better.
-const costOf = g => (g.node ? 4 : g.base.reduce((s, b) => s + Math.max(0, b), 0) + 1);
+// Learning Algorithm modules count at their fully grown stats: that is what they are worth.
+const costOf = g => (g.node ? 4 : grownBase(g).reduce((s, b) => s + Math.max(0, b), 0) + 1);
 
 function newMachine(gameIndex, extra = {}) {
   const t = presetTarget(GAME.machines[gameIndex].presets[0]);
@@ -227,6 +228,15 @@ function sourcesFor(results, pool) {
   return out;
 }
 
+// Totals once the layout's Learning Algorithm modules have fully grown, and how many cycles that takes.
+function grownHtml(m, r, layout) {
+  const mods = r.placements.map(p => plan.pool[p.id]), cycles = cyclesToGrow(mods);
+  if (!cycles) return '';
+  const types = typesOf(plan.pool.map(g => ({ ...g, base: grownBase(g) })));
+  const t = evaluate(gridOf(layout), r.placements, Object.fromEntries(types.map(x => [x.id, x]))).totals;
+  return `<div class="muted">Fully grown in about ${cycles} cycle${cycles === 1 ? '' : 's'}: ${totalsHtml(t)}</div>`;
+}
+
 function renderResults() {
   if (!plan) { $('#results').innerHTML = ''; return; }
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t]));
@@ -248,7 +258,7 @@ function renderResults() {
         <ul class="plain">${r.gave.map(p => `<li><span class="swatch" style="background:${moduleColor(plan.pool[p.id])}"></span>Take out ${esc(plan.pool[p.id].name)} <span class="muted">— ${moduleDetailsHtml(plan.pool[p.id])}</span></li>`).join('')}</ul>` : ''}
       ${neededNames(m).filter(n => !r.placements.some(p => plan.pool[p.id].name.startsWith(n))).map(n => `<p class="bad">No free ${esc(n)}: planned without it${(m.job?.needs || []).includes(n) ? ', so this machine cannot run its recipe until you get one' : ''}.</p>`).join('')}
       <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, kept ? r.placements.map(() => true) : installedOf(plan.at)[m.name] || [])}</figure>
-        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, m).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+        <div><div>${tot}</div>${grownHtml(m, r, layout)}${job}<ul class="plain">${g.readout(...totals, m).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
       </div>
       ${kept ? checklistHtml(r.placements, plan.pool, r.placements.map(() => true), '', [], true) : r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
@@ -269,9 +279,12 @@ async function planAll() {
   const locked = S.machines.filter(m => m.locked && m.uid != null);
   const avail = S.pool.map(g => g.count - locked.reduce((n, m) => n + (g.where?.[m.uid] || 0), 0));
   const take = (placements, sign) => placements.forEach(p => (avail[p.id] -= sign));
-  const typesFor = (m, costScale) => S.pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
+  // weights (pass 2): a Learning Algorithm module also earns what it will still grow, valued like stats it has
+  // now, so layouts fill up with them. Targets are still checked on today's stats.
+  const growth = (g, weights) => (!weights || g.node || !g.learnMax ? 0 : grownBase(g).reduce((s, v, k) => s + weights[k] * (v - g.base[k]), 0));
+  const typesFor = (m, costScale, weights) => S.pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
     node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback,
-    count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) }));
+    count: accepts(m, g) ? avail[id] : 0, cost: costScale * costOf(g) - growth(g, weights) }));
   const budget = Math.max(1, S.seconds) * 1000;
   // A machine option (Furnace: Blast) makes the layout include that module, if one is still free.
   const required = m => {
@@ -350,7 +363,12 @@ async function planAll() {
     if (weights.some(x => x > 0)) {
       step('Using what is left', i, m);
       const mins = unreachable ? [null, null, null] : effectiveMins(m);
-      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001), opts(weights, mins, m));
+      // Learning growth counts for the prioritised stats and for any stat with a target (growing past a target
+      // reaches its next step, e.g. the Furnace's next purity grade), at the top priority's weight.
+      // Not for a stat that only counts in whole steps (Furnace Quality: 162 is no better than 101).
+      // shortcut: step stats ignore growth unless prioritised; count it only if it reaches the next step, if wanted.
+      const growW = weights.map((w, k) => w || (effectiveMins(m)[k] !== null && !(k === 2 && gm(m).qualityStep) ? Math.max(...weights, 1) : 0));
+      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001, growW), opts(weights, mins, m));
       if (stopped) return;
       if (r2.found) r = r2;
     }

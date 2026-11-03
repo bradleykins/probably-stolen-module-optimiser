@@ -124,4 +124,19 @@ check(big, printerTypes, two);
 const twoCells = two.placements.flatMap(p => p.cells);
 assert.strictEqual(new Set(twoCells).size, twoCells.length, 'no overlaps between required modules');
 console.log('two required modules:', two.totals);
+
+// A placement bonus (negative cost, e.g. a Learning Algorithm module that will still grow) is used even when the
+// module's stats today are 0, and pruning gives the same best score as the full search.
+{
+  const g = full(3, 3);
+  const types = [mod(1, sq, 1, [0, 0, 0], { cost: -30 }), mod(2, L, 2, [0, 0, 8]), mod(3, dom, 2, [0, 0, 5], { cost: -2 })];
+  for (const mins of [[null, null, null], [null, null, 10]]) {
+    const a = solve(g, types, { weights: [0, 0, 1], mins, timeLimitMs: 20000 });
+    const b = solve(g, types, { weights: [0, 0, 1], mins, timeLimitMs: 20000, noPrune: true });
+    assert.ok(a.found && a.optimal && b.optimal, 'bonus search finished');
+    assert.strictEqual(a.score, b.score, 'pruning keeps the best score with bonuses');
+    assert.ok(a.placements.some(p => p.id === 1), 'module with a bonus and no stats today is placed');
+    if (mins[2] !== null) assert.ok(a.totals[2] >= 10, 'minimum checked on today\'s stats');
+  }
+}
 console.log('all tests passed');
