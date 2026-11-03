@@ -11,6 +11,9 @@
 @media (min-width: 760px) { main { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
 #machines, #results { display: grid; gap: 10px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr)); }
 .mcard.skip { opacity: .5; }
+/* The Plan buttons stay at the top while the results scroll (the section scrolls itself on wide screens). */
+.plan-bar { position: sticky; top: 0; z-index: 3; background: var(--panel); margin: -12px -12px 8px; padding: 12px 12px 4px; border-bottom: 1px solid var(--line); }
+.plan-bar #status { margin: 4px 0 0; }
 .mcard .grip { cursor: grab; color: var(--muted); font-size: 18px; padding: 0 4px; user-select: none; }
 .dragging { opacity: .4; }
 .drop-over { outline: 2px dashed var(--accent, #4a9eff); }
@@ -46,6 +49,7 @@ nav a { color: var(--accent); }
   </section>
 
   <section>
+    <div class="plan-bar">
     <h2>2. Plan</h2>
     <div class="row">
       <button class="primary" id="solve">Plan all machines</button><button id="stop" disabled>Stop</button>
@@ -54,6 +58,7 @@ nav a { color: var(--accent); }
       <label><input type="checkbox" id="flip"> Allow mirroring</label>
     </div>
     <p id="status" class="muted"></p>
+    </div>
     <div id="pool"></div>
     <div id="results"></div>
   </section>
