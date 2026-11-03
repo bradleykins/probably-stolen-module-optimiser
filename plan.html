@@ -44,7 +44,7 @@ nav a { color: var(--accent); }
     <p class="hint">Save file: <code>%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen\save_0.es3</code>.
       Higher machines get first pick of modules. A target is a minimum (or a job deadline); after every target is met, each machine maximises its stats in the order you choose. A job deadline is a stop point: Performance stops at what the deadline needs, and spare modules go to the other machines. A machine whose installed modules already meet its target is kept exactly as it is.
       Imported machines start with targets that keep what they do now, and machines with a job deadline do not maximise further; change either per machine.</p>
-    <p id="reimport" class="warn" hidden>This page reads saves better since you last imported (for example, AgeWell modules now count as installed). Click Import from save again.</p>
+    <p id="reimport" class="warn" hidden>This page reads saves better since you last imported (for example, it now uses the names you gave your storage and machines). Click Import from save again.</p>
     <ol id="rank"></ol>
     <div id="machines"></div>
   </section>
@@ -73,7 +73,7 @@ const KEY = 'ps-plan-v1';
 const { evaluate } = solverModule();
 const DEFAULT = { machines: [], pool: [], seconds: 6, flip: true };
 // Bump when the save reader or machine list changes what an import gives, so old imports ask to be redone.
-const SAVE_READER = 2;
+const SAVE_READER = 3;
 let S;
 try { S = { ...structuredClone(DEFAULT), ...JSON.parse(localStorage.getItem(KEY)) }; } catch { S = structuredClone(DEFAULT); }
 let worker = null, stopped = false;

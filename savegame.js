@@ -36,6 +36,8 @@ function readSaveItems(text) {
 const saveTag = (o, k) => o._values[o._keys.indexOf(k)];
 const saveInt = (o, k) => (o._keys.includes(k) ? saveTag(o, k).valueInt : 0);
 const saveStr = (o, k) => (o._keys.includes(k) ? saveTag(o, k).internalValueString : '');
+// What the player sees: the name they gave it in the game (GeneralHelper.SetCustomName), else type and id.
+const label = o => (o._keys.includes('CUSTOM_NAME_TAG') && saveTag(o, 'CUSTOM_NAME_TAG').valueEnabled !== false && saveStr(o, 'CUSTOM_NAME_TAG')) || `${o.name || o.identifier} #${o.uniqueId}`;
 const isModuleItem = o => (o.itemTypes || []).includes('NODE') || o._keys.includes('MODULE_TAG');
 
 // One module or node item as an optimiser entry (without count).
@@ -99,7 +101,7 @@ function readSave(text, GAME) {
       ? { current: saveInt(o, 'MACHINE_PROGRESS_CURRENT_TAG'), target: saveInt(o, 'MACHINE_PROGRESS_TARGET_TAG'), label: saveStr(o, 'DESEQUENCER_TARGET_ID_TAG').replace(/_/g, ' ') }
       : null;
     machines.push({
-      uid: o.uniqueId, gameIndex, name: `${o.name} #${o.uniqueId}`,
+      uid: o.uniqueId, gameIndex, name: label(o),
       stage: Math.min(saveInt(o, 'MODULE_UPGRADE_STAGE_INT'), GAME.bays[gm.bay].length - 1),
       totals: ['PERFORMANCE', 'POWER', 'QUALITY'].map(s => saveInt(o, `TOTAL_PERCENTAGE_${s}_BONUS_INT`)),
       // Working: the game locks the module bay while a machine works (MachineHelper.LockModuleInv sets
@@ -113,7 +115,7 @@ function readSave(text, GAME) {
   const parentOf = new Map();
   for (const o of items) (o.childItems || []).forEach(u => parentOf.set(ref(o, u), o));
   const looseIn = o => {
-    for (let p = parentOf.get(ref(o, o.uuid)); p; p = parentOf.get(ref(p, p.uuid))) if (!/hidden save bag/i.test(p.name || '')) return `${p.name || p.identifier} #${p.uniqueId}`;
+    for (let p = parentOf.get(ref(o, o.uuid)); p; p = parentOf.get(ref(p, p.uuid))) if (!/hidden save bag/i.test(p.name || '')) return label(p);
     return 'outside any room';
   };
   const groups = new Map();
