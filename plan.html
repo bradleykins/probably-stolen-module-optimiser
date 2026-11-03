@@ -294,7 +294,19 @@ function renderResults() {
   const expandCard = `<div class="mcard"><h4>Next Module Bay Expansion Kit</h4>${ex
     ? `<p>Use it on <b>${esc(ex.name)}</b> (${esc(ex.to)}): ${totalsHtml(ex.before)} → ${totalsHtml(ex.after)}${ex.fixes ? ' <span class="ok">and it then meets its target</span>' : ''}.</p>`
     : '<p class="muted">No planned machine gets better with one more bay stage and the modules you have.</p>'}</div>`;
-  $('#results').innerHTML = stale + expandCard + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul>${trainHtml(left)}</div>`;
+  $('#results').innerHTML = stale + expandCard + learnHtml(plan.pool) + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul>${trainHtml(left)}</div>`;
+}
+
+// Each Learning Algorithm module's stats now and the max they grow to (2x the module's positive stats, ModuleEffectHelper.InitLearningAlgo).
+function learnHtml(pool) {
+  const mods = pool.filter(g => g.learnMax && g.count > 0);
+  if (!mods.length) return '';
+  const row = g => {
+    const left = cyclesToGrow([g]);
+    const stats = g.learnMax.map((v, k) => (v > 0 ? `${STATS[k]} ${g.base[k]} / ${v}` : '')).filter(Boolean).join(', ');
+    return `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)}${g.count > 1 ? ` ×${g.count}` : ''}: ${stats} ${left ? `<span class="muted">(${left} working night${left === 1 ? '' : 's'} to max)</span>` : '<span class="ok">(maxed)</span>'}</li>`;
+  };
+  return `<div class="mcard"><h4>Learning Algorithm max levels</h4><p class="muted">Each positive stat starts at 0 and grows +1 on every night its machine works, up to 2x the module's stat. Negative stats never change. Shown as now / max.</p><ul class="plain">${mods.map(row).join('')}</ul></div>`;
 }
 
 // Every machine grows its Learning Algorithm modules by +1 per stat on each night it works (MachineHelper.OnMachineActioned).
