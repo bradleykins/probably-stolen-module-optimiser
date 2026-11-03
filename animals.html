@@ -45,6 +45,28 @@ tr.risky td { color: var(--bad); }
     </div>
     <p class="hint">A rat eats its Hunger Rate every night whatever its size, and its meat is its weight cut into 400 g Raw Meat, 200 g Small Raw Meat, 100 g Morsels and a Small Morsel for every 50 g started. It grows fast to day 5, slowly to day 10, then loses weight from day 11. From day 14 (× Longevity) each night has a 75% chance it dies. Rats breed from day 3.</p>
     <div id="rats"></div>
+    <details class="pcard"><summary><h4>Disease and Immunity serum</h4> <span class="muted">not worth it for meat rats; breed for Immunity instead</span></summary>
+      <ul class="plain">
+        <li>Base Immunity is 30. Below 50, a rat may fall sick each night: 25% − 20% × Immunity/50 (13% at 30).</li>
+        <li>A sick rat loses 25 health a night and heals (Immunity − 25)/25 × 30% of its max health (6 at Immunity 30), so it loses about 19 a night. It recovers each night with a chance equal to its Immunity. It breeds 75% less while sick.</li>
+        <li>So a sick rat takes 5 to 6 nights to die. A meat rat culled at day 4 almost never dies of disease, and its meat depends only on its weight.</li>
+        <li>Immunity serum: 10 doses (value 100). A dose is 20 µL and the rat burns 5 µL a night, so it lasts about 4 nights. While it lasts, Immunity is × 1.75 (30 becomes 52: no disease, heals 30 a night) and Hunger Rate is × 1.25 (65 becomes 81 kcal a night).</li>
+        <li>For a meat rat the serum costs about 65 kcal more feed (about 10% worse feed efficiency) plus about 10 value a dose, to stop a disease that rarely kills it. Not worth it.</li>
+        <li>For breeders it keeps fertility up, but it needs a dose every 4 nights. Breeding for an Immunity gene of 50 or more does the same for free.</li>
+      </ul>
+    </details>
+    <details class="pcard"><summary><h4>Self-sustaining rat farm</h4> <span class="muted">breeders, Auto Butcher, space, hygiene and food</span></summary>
+      <ul class="plain">
+        <li><b>Breeders.</b> Rats breed from day 3. A pregnancy lasts 3 nights and gives 3 ± 1 pups. Each mating has a chance equal to the lower Fertility of the pair (50% at base), and a rat mates up to 3 times a night. Keep a few females per male. Breeders start dying of old age at day 14 (75% a night), so let young rats replace them. Fertility drops when a rat's hunger is under 200, from day 11, when it is sick, and when the cage is crowded.</li>
+        <li><b>Auto Butcher on the cage.</b> Harvest by age from day 4, set how many females and males to keep, and turn on spare pregnant, cull sick and cull prion. It never butchers a named or marked rat.</li>
+        <li><b>Space.</b> Keep rats under 55% of the cage area. Over 55%: fertility −20%. Over 70%: −40%, and each night the biggest rat has a 5% chance to kill a smaller one. Over 90%: −60% and 15%.</li>
+        <li><b>Hygiene.</b> A rat poops on nights it grows 30 g or more (up to day 5). Once droppings and dead rats cover 25% of the cage area, rats can fall sick from it. Clean the cage.</li>
+        <li><b>Food.</b> A day-4 rat gives about 1.7 kcal of meat per kcal it eats, so on paper rats can feed rats. But the Feed Dispenser draws from every food it holds at once. While it holds any rat meat, each feeding gives the rat a prion chance of 100 − Immunity (70% at base). Prions cut Growth Rate, Immunity and Longevity by 20%, and once prion rat meat goes in, every rat fed from it gets prions.
+          <ul><li>Do not send the Auto Butcher's rat cuts to the rats' own dispenser.</li>
+          <li>Feed plants from Hydroponics, or fish meat (fish is not an animal species, so it causes no prion rolls).</li>
+          <li>Sell the rat meat or feed it to your fish.</li></ul></li>
+      </ul>
+    </details>
   </section>
 </main>
 <script src="animals.js"></script>
