@@ -90,13 +90,21 @@ function presetTarget(p) {
   return t;
 }
 
-// The module a machine option requires (e.g. the Furnace's Blast): the first owned, accepted one, or null.
-// modules: list of {name, count}; returns its index.
-function requiredModule(machineDef, on, modules) {
-  if (!on || !machineDef.option) return null;
-  const i = modules.findIndex(m => m.count > 0 && m.name.startsWith(machineDef.option.module));
-  return i < 0 ? null : i;
+// Modules a machine's ticked options ask for (Furnace: Blast; DNA Manipulator: Precision Extraction, filters...).
+// state: object with the ticked option keys; modules: list of {name, count}.
+// Returns {ids: one distinct index into modules per ticked option you have, missing: module names you do not}.
+function requiredModules(machineDef, state, modules) {
+  const ids = [], missing = [];
+  for (const o of machineDef.options || []) {
+    if (!state[o.key]) continue;
+    const i = modules.findIndex((m, j) => !ids.includes(j) && m.count > 0 && m.name.startsWith(o.module));
+    if (i < 0) missing.push(o.module); else ids.push(i);
+  }
+  return { ids, missing };
 }
+// Checkboxes for a machine's options. attrs: extra data attributes; owns(name): whether you have that module.
+const optionsHtml = (def, state, attrs, owns) => (def.options || []).map(o => `<label style="display:block;margin:2px 0;font-size:12px">
+  <input type="checkbox" ${attrs} data-opt="${o.key}" ${state[o.key] ? 'checked' : ''}> ${esc(o.label)}${state[o.key] && !owns(o.module) ? ' <span class="bad">(you own none)</span>' : ''}</label>`).join('');
 
 // Bay grid with each placed item outlined and numbered. modules[id] gives name/node for a placement id.
 function boardHtml(layout, placements, modules, cellSize = 30, done = []) {

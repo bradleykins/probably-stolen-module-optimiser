@@ -36,7 +36,7 @@ const read = key => { try { return JSON.parse(localStorage.getItem(key)) || {}; 
 function entries() {
   const out = [], plan = read('ps-plan-v1').lastPlan;
   if (plan) for (const m of plan.machines)
-    out.push({ title: `Plan · ${m.name}`, name: m.name, at: plan.at, layout: m.layout, placements: m.placements, modules: plan.pool, totals: m.totals, items: m.items || [], sources: m.sources || [] });
+    out.push({ title: `Plan · ${m.name}${m.kept ? ' ✓' : ''}`, name: m.name, kept: m.kept, gave: m.gave || [], at: plan.at, layout: m.layout, placements: m.placements, modules: plan.pool, totals: m.totals, items: m.items || [], sources: m.sources || [] });
   for (const x of read('ps-module-optimiser-v3').savedLayouts || [])
     out.push({ title: `Saved · ${x.machineName} — ${x.stageName}`, layout: x.layout, placements: x.placements, modules: x.modules, totals: x.totals, items: [], sources: [], inserted: x.inserted || [] });
   return out;
@@ -53,11 +53,15 @@ function render() {
   $('#pick').innerHTML = list.map((e, i) => `<option value="${i}" ${i === pick ? 'selected' : ''}>${esc(e.title)}</option>`).join('');
   const e = list[pick];
   // Plan items tick here and in the planner (shared key); saved layouts show their ticks from the single-machine page.
-  const list2 = e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items)
+  // Kept as it is: everything ticked and greyed, with a banner, so it is obvious there is nothing to do.
+  const keptBanner = !e.kept ? '' : e.gave.length
+    ? `<p class="ok"><b>Keep as it is, except:</b> take out ${e.gave.map(id => esc(e.modules[id]?.name || '?')).join(', ')} for another machine.</p>`
+    : '<p class="ok"><b>Nothing to change.</b> This machine already meets its target: keep it exactly as it is.</p>';
+  const list2 = e.kept ? checklistHtml(e.placements, e.modules, e.placements.map(() => true), '', e.items, true) : e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items)
     : checklistHtml(e.placements, e.modules, e.inserted, '', [], true);
-  $('#top').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 36, e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}
+  $('#top').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 36, e.kept ? e.placements.map(() => true) : e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}
     ${legendHtml()}
-    <div>${totalsHtml(e.totals)}</div>`;
+    <div>${totalsHtml(e.totals)}</div>${keptBanner}`;
   $('#view').innerHTML = `${list2}
     ${e.sources.length ? `<b>Where the modules come from</b><ul class="plain" style="margin:4px 0;padding-left:18px">${e.sources.map(l => `<li>${l}</li>`).join('')}</ul>` : ''}`;
 }

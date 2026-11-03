@@ -131,7 +131,7 @@ const GAME = {
       qualityStep: 100, // Quality between steps does nothing
       // With Blast, 3 inputs make 2 ingots: 1/3 more ingots for 1 purity grade less. That pays more per input
       // at every Quality except where it drops an ingot just below Perfect (+200% value).
-      option: { key: 'blast', module: 'Furnace Module (Blast)', label: 'Use a Blast module: 2 ingots per 3 inputs, 1 purity grade less' },
+      options: [{ key: 'blast', module: 'Furnace Module (Blast)', label: 'Use a Blast module: 2 ingots per 3 inputs, 1 purity grade less' }],
       readout: (P, E, Q, opt = {}) => {
         const b = trunc(Q / 100) - (opt.blast ? 1 : 0);
         return [`Purity bonus: ${b >= 0 ? '+' : ''}${b} grade${Math.abs(b) === 1 ? '' : 's'}${opt.blast ? ' (Blast: −1 included)' : ' (without Blast)'}`,
@@ -179,6 +179,13 @@ const GAME = {
       presets: [{ label: 'Fastest', mins: [null, null, null], weights: [1, 0.25, 0] }],
     },
     {
+      // Tick the modules you want in it; the layout is built around them (MachineDnaManipulator).
+      options: [
+        { key: 'precision', module: 'Precision Extraction Module', label: 'Precision Extraction: extract only the trait copied from a disk' },
+        { key: 'stabilizer', module: 'Genetic Stabilizer Module', label: 'Genetic Stabilizer: the seed survives extraction (loses 1 rank)' },
+        { key: 'posFilter', module: 'Positive Trait Filter Module', label: 'Positive Trait Filter: extract only good traits (not with the Negative filter)' },
+        { key: 'negFilter', module: 'Negative Trait Filter Module', label: 'Negative Trait Filter: extract only bad traits (not with the Positive filter)' },
+      ],
       name: 'DNA Manipulator', id: 'plant_dna_manipulator', progress: { base: 10, ratio: 2 }, jobs: [['Extract from a natural seed (complexity 0)', 20], ['Seed complexity + heat 1', 24], ['Seed complexity + heat 2', 28], ['Seed complexity + heat 3', 32], ['Seed complexity + heat 4', 36], ['Seed complexity + heat 5', 40], ['Seed complexity + heat 6', 44], ['Seed complexity + heat 8', 52], ['Seed complexity + heat 10', 60]], bay: 'standard', accepts: ['universal', 'dna'], power: 12,
       stats: 'Every operation, extract or apply, needs 20 + 4 × (seed complexity + heat) work; a natural donor seed is complexity 0, so an extraction is 20. Success chance = 95% − 5% × (complexity + heat) + Quality/2. Performance/2 speeds progress (base 10).',
       readout: (P, E, Q) => [`Success chance bonus: ${pct(trunc(Q / 2))}`, `Progress per cycle: ${speed(10, P, 2)}`, `Power: ${powerUse(12, E)} per cycle`],
@@ -201,6 +208,7 @@ const GAME = {
     {
       // Jobs: [name, work, modules the chip needs]. From ModuleDirectory: CreateCncChip needs the "Metal Printing
       // Module" and "CNC Module" machine tags; 10mm mags and combat melee chips need Metal Printing only.
+      options: [{ key: 'meleeBatch', module: 'Melee Batch Module', label: 'Melee Batch Module: +1 weapon on every melee print' }],
       name: '3D Printer', id: 'printer', progress: { base: 24 }, jobs: [['Small Plastic Bottle x6', 10], ['Improved Internal Springs x4', 20], ['Makeshift RDS x4', 20], ['Toy Laser Pointer x4', 20], ['RDS x2', 24], ['Laser Sight x2', 24], ['Silencer x2', 24], ['.22 Mag x2', 24], ['Gun Part x3', 30, METAL_CNC], ['Box Cutter x3', 34], ['.22 Mag High x2', 36], ['10mm Mag x2', 36, METAL], ['.22 Mag Ext x2', 48], ['10mm Mag High', 48, METAL], ['.22 Pistol', 50], ['.22 Pistol x2', 60], ['10mm Mag Ext', 60, METAL], ['Nestfire Compact Frame', 60, METAL_CNC], ['Kitchen Knife x4', 64], ['Ironcraft 10 Frame', 70, METAL_CNC], ['Hatchet x4', 75], ['Meat Cleaver x4', 82], ['Combat Knife x5', 98, METAL], ['Combat Machete x3', 120, METAL]], bay: 'standard', accepts: ['universal', 'printer'], power: 8,
       stats: 'Quality/4 = print quality (melee condition roll 20-30 + Quality/4: Good at 60, Excellent at 90). Performance = progress (base 24).',
       readout: (P, E, Q) => {

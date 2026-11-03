@@ -121,7 +121,7 @@ function jobPerformance(m) {
 }
 
 // Modules this machine must have installed: the Furnace's Blast if ticked, plus what the chosen recipe needs.
-const neededNames = m => { const g = gm(m); return [...(g.option && m[g.option.key] ? [g.option.module] : []), ...(m.job?.needs || [])]; };
+const neededNames = m => [...(gm(m).options || []).filter(o => m[o.key]).map(o => o.module), ...(m.job?.needs || [])];
 const owns = name => S.pool.some(g => g.count > 0 && g.name.startsWith(name));
 
 function jobHtml(m) {
@@ -174,7 +174,7 @@ function renderMachines() {
           : `<label>Min ${s}<input type="number" data-k="${m.key}" data-f="min${k}" value="${m.mins[k] ?? ''}" placeholder="none"></label>`)).join('')}
       </div>
       ${jobHtml(m)}
-      ${g.option ? `<label style="margin:4px 0;display:block"><input type="checkbox" data-k="${m.key}" data-f="${g.option.key}" ${m[g.option.key] ? 'checked' : ''}> ${esc(g.option.label)}${m[g.option.key] && requiredModule(g, true, S.pool) === null && S.pool.length ? ' <span class="bad">(you own none)</span>' : ''}</label>` : ''}
+      ${g.options ? `<div style="margin:4px 0">${g.options.length > 1 ? '<span class="muted">Modules you want in it (the layout is built around them):</span>' : ''}${optionsHtml(g, m, `data-k="${m.key}"`, n => owns(n) || !S.pool.length)}</div>` : ''}
       <div class="row stack" style="margin:4px 0 0">
         ${['1st', '2nd', '3rd'].map((label, r) => `<label>Then ${label}<select data-k="${m.key}" data-f="prio${r}"><option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${m.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('')}
       </div>
@@ -246,12 +246,12 @@ function renderResults() {
       ${kept && !r.gave?.length ? '<p class="ok">Already meets its target with the modules installed now (or has no target you set): kept exactly as it is, nothing to change.</p>' : ''}
       ${kept && r.gave?.length ? `<p class="ok">Meets its target with the modules installed now. Only change: take out the module${r.gave.length === 1 ? '' : 's'} below for another machine; it still meets its target and nothing it prioritises gets worse.</p>
         <ul class="plain">${r.gave.map(p => `<li><span class="swatch" style="background:${moduleColor(plan.pool[p.id])}"></span>Take out ${esc(plan.pool[p.id].name)} <span class="muted">— ${moduleDetailsHtml(plan.pool[p.id])}</span></li>`).join('')}</ul>` : ''}
-      ${neededNames(m).filter(n => !r.placements.some(p => plan.pool[p.id].name.startsWith(n))).map(n => `<p class="bad">No free ${esc(n)}: planned without it, so this machine cannot run its recipe until you get one.</p>`).join('')}
-      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, installedOf(plan.at)[m.name] || [])}</figure>
-        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, { blast: !!m.blast }).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+      ${neededNames(m).filter(n => !r.placements.some(p => plan.pool[p.id].name.startsWith(n))).map(n => `<p class="bad">No free ${esc(n)}: planned without it${(m.job?.needs || []).includes(n) ? ', so this machine cannot run its recipe until you get one' : ''}.</p>`).join('')}
+      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, kept ? r.placements.map(() => true) : installedOf(plan.at)[m.name] || [])}</figure>
+        <div><div>${tot}</div>${job}<ul class="plain">${g.readout(...totals, m).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
       </div>
-      ${kept ? '' : r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
+      ${kept ? checklistHtml(r.placements, plan.pool, r.placements.map(() => true), '', [], true) : r.placements.length ? checklistHtml(r.placements, plan.pool, installedOf(plan.at)[m.name] || [], `data-install="${esc(m.name)}"`, sources.get(m.key)) : '<p class="muted">No modules.</p>'}
     </div>`;
   }).join('');
   const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
@@ -375,8 +375,8 @@ async function planAll() {
   // Keep a compact copy for overlay.html.
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r), S.pool);
   S.lastPlan = { at: plan.at, pool: S.pool.map(g => ({ name: g.name, node: !!g.node, base: g.base, cells: g.cells, details: moduleDetails(g) })),
-    machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
-      totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, items: sources.get(m.key) || [], sources: [] })) };
+    machines: results.filter(x => x.r && x.r.placements.length).map(({ m, r, kept }) => ({ name: m.name, layout: layoutOf(m), placements: r.placements,
+      totals: evaluate(gridOf(layoutOf(m)), r.placements, byId).totals, items: sources.get(m.key) || [], sources: [], kept: !!kept, gave: (r.gave || []).map(p => p.id) })) };
   save();
   $('#status').textContent = `Planned ${ms.length} machine(s).`;
   $('#solve').disabled = false; $('#stop').disabled = true; worker = null;
@@ -495,9 +495,9 @@ document.addEventListener('change', e => {
   const num = () => (t.value === '' ? null : parseInt(t.value, 10));
   const f = d.f;
   // Any change to minimums, preset or job makes this machine's target yours (planned before defaults).
-  if (f === 'preset' || f.startsWith('min') || f.startsWith('job') || f === 'blast') m.userTarget = true;
+  if (d.opt) { m[d.opt] = t.checked; m.userTarget = true; outdated('Settings changed since this plan. Plan again to update it.'); render(); return; } // a module you want in it
+  if (f === 'preset' || f.startsWith('min') || f.startsWith('job')) m.userTarget = true;
   if (f === 'include') m.include = t.checked;
-  else if (f === 'blast') m.blast = t.checked;
   else if (f === 'locked') m.locked = t.checked;
   else if (f === 'stage') m.stage = +t.value;
   else if (f === 'preset' && t.value !== '') Object.assign(m, presetTarget(gm(m).presets[+t.value]));

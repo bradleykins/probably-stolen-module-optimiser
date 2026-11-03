@@ -173,8 +173,7 @@ function render() {
   $('#machineStats').textContent = mc.stats;
   $('#stages').innerHTML = bays().map((b, i) => `<button data-stage="${i}" class="${i === S.stage ? 'on' : ''}">${esc(b.name)}</button>`).join('');
   $('#preset').innerHTML = mc.presets.map((p, i) => `<option value="${i}" ${i === S.preset ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
-  const opt = mc.option, have = opt && requiredModule(mc, true, S.modules.filter(accepted)) !== null;
-  $('#option').innerHTML = opt ? `<label><input type="checkbox" id="blast" ${S.blast ? 'checked' : ''}> ${esc(opt.label)}</label>${S.blast && !have ? ` <span class="bad">Add a ${esc(opt.module)} to your modules first.</span>` : ''}` : '';
+  $('#option').innerHTML = optionsHtml(mc, S, '', name => S.modules.some(m => accepted(m) && m.count > 0 && m.name.startsWith(name)));
   $('#mins').innerHTML = STATS.map((s, k) => `<label>Min ${s}<input type="number" data-min="${k}" value="${S.mins[k] ?? ''}" placeholder="none"></label>`).join('');
   $('#priority').innerHTML = ['1st', '2nd', '3rd'].map((label, r) => `<label>${label}<select data-prio="${r}">
     <option value="">—</option>${STATS.map((s, k) => `<option value="${k}" ${S.priority[r] === k ? 'selected' : ''}>${s}</option>`).join('')}</select></label>`).join('');
@@ -238,7 +237,7 @@ function renderResult() {
     const need = mins[k] === null ? '' : totals[k] >= mins[k] ? ` <span class="ok">≥ ${mins[k]} ✓</span>` : ` <span class="bad">needs ${mins[k]}</span>`;
     return `<tr><td>${statSpan(k)}</td><td>${statSpan(k, fmt(totals[k]) + "%")}${need}</td></tr>`;
   }).join('');
-  const readout = machine().readout(...totals, { blast: r.blast }).map(line => `<tr><td colspan="2">${esc(line)}</td></tr>`).join('');
+  const readout = machine().readout(...totals, r.options || {}).map(line => `<tr><td colspan="2">${esc(line)}</td></tr>`).join('');
   const rows = r.placements.map((p, n) => {
     const m = r.mods[p.id];
     return `<tr><td><span class="swatch" style="background:${moduleColor(m)}"></span>${m.node ? 'N' : ''}${n + 1}. ${esc(m.name)}</td><td>${items[n].map(fmt).join(' / ')}</td></tr>`;
@@ -256,9 +255,9 @@ function solveNow() {
   const types = mods.map((m, id) => ({ id, cells: m.cells, count: accepted(m) ? m.count : 0, base: m.node ? [0, 0, 0] : m.base,
     node: !!m.node, receiver: !!m.receiver, top: !!m.top, side: !!m.side, feedback: !!m.feedback }));
   // A machine option (Furnace: Blast) makes the layout include that module.
-  const need = requiredModule(machine(), !!S.blast, mods.map((m, i) => ({ name: m.name, count: types[i].count })));
-  const opts = { weights: weightsOf(), mins: S.mins.slice(), require: need === null ? null : [need], rotate: S.rotate, flip: S.flip, heuristicMs: 5000, timeLimitMs: 60000 };
-  const base = { machine: S.machine, stage: S.stage, mods, types, mins: opts.mins, blast: need !== null };
+  const need = requiredModules(machine(), S, mods.map((m, i) => ({ name: m.name, count: types[i].count }))).ids;
+  const opts = { weights: weightsOf(), mins: S.mins.slice(), require: need.length ? need : null, rotate: S.rotate, flip: S.flip, heuristicMs: 5000, timeLimitMs: 60000 };
+  const base = { machine: S.machine, stage: S.stage, mods, types, mins: opts.mins, options: Object.fromEntries((machine().options || []).map(o => [o.key, !!S[o.key]])) };
   const t0 = Date.now();
   const show = (r, note, noteClass) => { result = { ...base, ...r, note, noteClass }; renderResult(); };
   const finish = () => { worker = null; $('#solve').disabled = false; $('#stop').disabled = true; $('#saveLayout').disabled = !(result && result.found && result.placements.length); };
@@ -408,7 +407,7 @@ document.addEventListener('change', e => {
   }
   if (t.id === 'machine') { S.machine = +t.value; S.stage = 0; S.preset = 0; applyPreset(); }
   else if (t.id === 'preset') { S.preset = +t.value; applyPreset(); }
-  else if (t.id === 'blast') S.blast = t.checked;
+  else if (t.dataset.opt) S[t.dataset.opt] = t.checked; // a module you want in the layout
   else if (t.id === 'catModule') { renderVariants(); return; }
   else if (['catVariant', 'catEffect1', 'catEffect2', 'nodeKind'].includes(t.id)) return;
   else if (t.id === 'rotate') S.rotate = t.checked;
