@@ -229,6 +229,17 @@ const GAME = {
       readout: (P, E, Q) => [`Chance increase: ${Math.max(0, 10 + trunc(Q / 10))}%`, `Power: ${powerUse(25, E + P)} per cycle`],
       presets: [{ label: 'Best chance', mins: [null, null, null], weights: [0.05, 0.05, 1] }],
     },
+    {
+      name: 'AgeWell', id: 'wine_rack', bay: 'standard', accepts: ['universal'], power: 24,
+      stats: 'Wine aged per cycle = 1 day + 1 per full 125 Quality. Efficiency/2 and Performance/2 both lower power use (MachineWineRack).',
+      readout: (P, E, Q) => [`Aging: ${1 + trunc(Math.max(0, Q) / 125)} day(s) per cycle`,
+        `Power: ${Math.max(1, trunc(24 - trunc(24 * E / 2) / 100) - trunc(trunc(24 * P / 2) / 100))} per cycle`],
+      presets: [
+        { label: '2 days per cycle (Quality ≥ 125)', mins: [null, null, 125], weights: [0.5, 0.5, 0] },
+        { label: '3 days per cycle (Quality ≥ 250)', mins: [null, null, 250], weights: [0.5, 0.5, 0] },
+        { label: 'Most aging', mins: [null, null, null], weights: [0.05, 0.05, 1] },
+      ],
+    },
   ],
   notOptimised: 'Blender, Heating Plate and Chem Finisher only take the Chemical Equipment Module, which has no stats.',
 };
