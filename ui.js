@@ -133,7 +133,7 @@ function boardHtml(layout, placements, modules, cellSize = 30, done = []) {
     }).join(';');
     const origin = p.cells[0] === cell;
     const label = m.node ? `N${here.n + 1}` : `${here.n + 1}`;
-    html += `<div class="part${origin ? ' origin' : ''}${done[here.n] ? ' done' : ''}" style="background:${moduleColor(m)};${borders}" title="${esc(m.name)} · Component ${here.n + 1} · Cell ${here.part + 1}${origin ? ' · placement origin' : ''}">${label}</div>`;
+    html += `<div class="part${origin ? ' origin' : ''}${done[here.n] ? ' done' : ''}" data-n="${here.n}" style="background:${moduleColor(m)};${borders}" title="${esc(m.name)} · Component ${here.n + 1} · Cell ${here.part + 1}${origin ? ' · placement origin' : ''}">${label}</div>`;
   }
   return html + '</div>';
 }

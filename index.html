@@ -141,7 +141,7 @@ function renderSavedLayouts() {
       <div class="fields">
         <div class="layout-actions"><b>${esc(x.machineName)} — ${esc(x.stageName)}</b><button class="delete-layout" data-delete-layout="${i}">Delete layout</button></div>
         <span class="muted">${new Date(x.savedAt).toLocaleString()} · ${x.placements.length} components</span>
-        ${boardHtml(x.layout, x.placements, x.modules, 30, x.inserted)}
+        <div data-tick data-layout-board="${i}">${boardHtml(x.layout, x.placements, x.modules, 30, x.inserted)}</div>
         <span>${totalsHtml(x.totals)}</span>
         <div class="layout-actions"><b>Installation checklist</b><span class="progress">${done}/${x.placements.length} installed</span></div>
         <div class="component-list">${components}</div>
@@ -378,6 +378,13 @@ async function importSave(file) {
 
 document.addEventListener('click', e => {
   const d = e.target.dataset, id = e.target.id;
+  // a module clicked on a saved layout's board: tick or untick it in its installation checklist
+  const board = e.target.closest('[data-layout-board]'), cell = e.target.closest('[data-n]');
+  if (board && cell) {
+    const x = S.savedLayouts[+board.dataset.layoutBoard];
+    if (x) { x.inserted = Array.isArray(x.inserted) ? x.inserted : x.placements.map(() => false); x.inserted[+cell.dataset.n] = !x.inserted[+cell.dataset.n]; save(); renderSavedLayouts(); }
+    return;
+  }
   if (d.stage) { S.stage = +d.stage; clearResult(); render(); }
   else if (d.shape) {
     const [i, r, c] = d.shape.split(',').map(Number), m = S.modules[i];

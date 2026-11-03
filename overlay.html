@@ -59,7 +59,7 @@ function render() {
     : '<p class="ok"><b>Nothing to change.</b> This machine already meets its target: keep it exactly as it is.</p>';
   const list2 = e.kept ? checklistHtml(e.placements, e.modules, e.placements.map(() => true), '', e.items, true) : e.name ? checklistHtml(e.placements, e.modules, installedOf(e.at)[e.name] || [], `data-install="${esc(e.name)}" data-at="${e.at}"`, e.items)
     : checklistHtml(e.placements, e.modules, e.inserted, '', [], true);
-  $('#top').innerHTML = `${boardHtml(e.layout, e.placements, e.modules, 36, e.kept ? e.placements.map(() => true) : e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}
+  $('#top').innerHTML = `<div ${e.name && !e.kept ? `data-tick="${esc(e.name)}" data-at="${e.at}"` : ''}>${boardHtml(e.layout, e.placements, e.modules, 36, e.kept ? e.placements.map(() => true) : e.name ? installedOf(e.at)[e.name] || [] : e.inserted)}</div>
     ${legendHtml()}
     <div>${totalsHtml(e.totals)}</div>${keptBanner}`;
   $('#view').innerHTML = `${list2}
@@ -67,6 +67,14 @@ function render() {
 }
 
 $('#pick').addEventListener('change', e => { pick = +e.target.value; render(); });
+// a module clicked on the board: tick or untick it (shared with the planner)
+document.addEventListener('click', e => {
+  const board = e.target.closest('[data-tick]'), cell = e.target.closest('[data-n]');
+  if (!board || !cell) return;
+  const name = board.dataset.tick, at = +board.dataset.at, n = +cell.dataset.n;
+  setInstalled(at, name, n, !(installedOf(at)[name] || [])[n]);
+  render();
+});
 document.addEventListener('change', e => { const d = e.target.dataset; if (d.install !== undefined) { setInstalled(+d.at, d.install, +d.component, e.target.checked); render(); } });
 $('#prev').addEventListener('click', () => { pick--; render(); });
 $('#next').addEventListener('click', () => { pick++; render(); });

@@ -262,7 +262,7 @@ function renderResults() {
       ${kept && r.gave?.length ? `<p class="ok">Meets its target with the modules installed now. Only change: take out the module${r.gave.length === 1 ? '' : 's'} below for another machine; it still meets its target and nothing it prioritises gets worse.</p>
         <ul class="plain">${r.gave.map(p => `<li><span class="swatch" style="background:${moduleColor(plan.pool[p.id])}"></span>Take out ${esc(plan.pool[p.id].name)} <span class="muted">— ${moduleDetailsHtml(plan.pool[p.id])}</span></li>`).join('')}</ul>` : ''}
       ${neededNames(m).filter(n => !r.placements.some(p => plan.pool[p.id].name.startsWith(n))).map(n => `<p class="bad">No free ${esc(n)}: planned without it${(m.job?.needs || []).includes(n) ? ', so this machine cannot run its recipe until you get one' : ''}.</p>`).join('')}
-      <div class="boards">${now}<figure><figcaption>Planned</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, kept ? r.placements.map(() => true) : installedOf(plan.at)[m.name] || [])}</figure>
+      <div class="boards">${now}<figure ${kept ? '' : `data-tick="${esc(m.name)}"`}><figcaption>Planned${kept ? '' : ' <span class="muted">(click a module to tick it)</span>'}</figcaption>${boardHtml(layout, r.placements, plan.pool, 30, kept ? r.placements.map(() => true) : installedOf(plan.at)[m.name] || [])}</figure>
         <div><div>${tot}</div>${grownHtml(m, r, layout)}${job}<ul class="plain">${g.readout(...totals, m).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
       </div>
@@ -456,6 +456,13 @@ async function importSave(file) {
 
 document.addEventListener('click', e => {
   const d = e.target.dataset, id = e.target.id;
+  // a module clicked on a Planned board: tick or untick it in that machine's install checklist
+  const board = e.target.closest('[data-tick]'), cell = e.target.closest('[data-n]');
+  if (board && cell && plan) {
+    const name = board.dataset.tick, n = +cell.dataset.n;
+    setInstalled(plan.at, name, n, !(installedOf(plan.at)[name] || [])[n]);
+    renderResults(); return;
+  }
   if (id === 'importSave') $('#saveFile').click();
   else if (id === 'addMachine') {
     const gi = +$('#newType').value, n = S.machines.filter(m => m.gameIndex === gi).length + 1;
