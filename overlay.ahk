@@ -32,7 +32,7 @@ SetTimer KeepOnTop, 1000
         }
         return
     }
-    Run '"' Chrome '" --app="' Page '" --window-size=460,820'
+    Run '"' Chrome '" --app="' Page '" --window-size=316,' A_ScreenHeight // 2
     if hwnd := WinWait(Title, , 10)
         WinSetAlwaysOnTop 1, hwnd
 }
