@@ -32,7 +32,7 @@ const learnNote = m => (!m.learnMax ? '' : m.learnMax.some((v, k) => v > m.base[
 // A module's stats once its Learning Algorithm has fully grown (the same as now for other modules).
 const grownBase = m => (m.learnMax ? m.base.map((b, k) => (m.learnMax[k] > 0 ? m.learnMax[k] : b)) : m.base); // only positive stats grow; negative ones stay
 // Machine cycles until every Learning Algorithm module in a layout is fully grown (+1 per stat per cycle).
-const cyclesToGrow = mods => Math.max(0, ...mods.filter(m => m && m.learnMax).flatMap(m => m.learnMax.map((v, k) => v - m.base[k])));
+const cyclesToGrow = mods => Math.max(0, ...mods.filter(m => m && m.learnMax).flatMap(m => m.learnMax.map((v, k) => (v > 0 ? v - m.base[k] : 0))));
 
 // Stat colours, the same everywhere (style.css): Performance red, Efficiency green, Quality yellow.
 const STAT_COLORS = ['var(--perf)', 'var(--eff)', 'var(--qual)'];

@@ -78,7 +78,7 @@ let worker = null, stopped = false;
 // The plan is saved with everything else, so it is still there after a reload.
 const typesOf = pool => pool.map((g, id) => ({ id, cells: g.cells, base: g.node ? [0, 0, 0] : g.base,
   node: !!g.node, receiver: !!g.receiver, top: !!g.top, side: !!g.side, feedback: !!g.feedback, count: 0 }));
-const planToSave = p => p && { at: p.at, avail: p.avail, pool: p.pool, stale: p.stale || '',
+const planToSave = p => p && { at: p.at, avail: p.avail, pool: p.pool, stale: p.stale || '', expand: p.expand || null,
   results: p.results.map(({ m, r, unreachable, kept }) => ({ key: m.key, r: r && { placements: r.placements, gave: r.gave }, unreachable, kept: !!kept })) };
 function planFromSave(x) {
   if (!x) return null;
@@ -274,7 +274,33 @@ function renderResults() {
   }).join('');
   const left = plan.pool.map((g, id) => [g, plan.avail[id]]).filter(([, n]) => n > 0);
   const stale = plan.stale ? `<p class="warn">${esc(plan.stale === true ? 'This plan is out of date. Plan again to update it.' : plan.stale)}</p>` : '';
-  $('#results').innerHTML = stale + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul></div>`;
+  const ex = plan.expand;
+  const expandCard = `<div class="mcard"><h4>Next Module Bay Expansion Kit</h4>${ex
+    ? `<p>Use it on <b>${esc(ex.name)}</b> (${esc(ex.to)}): ${totalsHtml(ex.before)} → ${totalsHtml(ex.after)}${ex.fixes ? ' <span class="ok">and it then meets its target</span>' : ''}.</p>`
+    : '<p class="muted">No planned machine gets better with one more bay stage and the modules you have.</p>'}</div>`;
+  $('#results').innerHTML = stale + legendHtml() + cards + `<div class="mcard"><h4>Left over</h4><ul class="plain">${left.map(([g, n]) => `<li><span class="swatch" style="background:${moduleColor(g)}"></span>${esc(g.name)} ×${n} <span class="muted">— ${moduleDetailsHtml(g)}</span></li>`).join('') || '<li class="muted">nothing</li>'}</ul>${trainHtml(left)}</div>` + expandCard;
+}
+
+// Every machine grows its Learning Algorithm modules by +1 per stat on each night it works (MachineHelper.OnMachineActioned).
+// Best trainers first: ones that work every night they have power, cheapest power first (a module's negative
+// Efficiency raises power use). The Deal Maker never counts as working.
+const TRAINERS = { security_alarm: 'works every night it has power', mirage_projector: 'works every night it has power',
+  moisture_farm: 'works every night its bottle has room', hydroponic: 'works every night a plant grows',
+  water_purifier: 'works only on nights it cleans water', evaporator: 'works only on nights it evaporates',
+  furnace: 'works only on nights it smelts', printer: 'works only while printing', desequencer: 'works only while decoding',
+  plant_dna_manipulator: 'works only during a DNA job' };
+function trainHtml(left) {
+  const growing = left.filter(([g]) => !g.node && cyclesToGrow([g]) > 0);
+  if (!growing.length) return '';
+  const ids = Object.keys(TRAINERS);
+  const trainerFor = g => S.machines.filter(m => m.uid != null && !handsOff(m) && accepts(m, g) && ids.includes(gm(m).id))
+    .sort((a, b) => ids.indexOf(gm(a).id) - ids.indexOf(gm(b).id))[0];
+  const line = g => {
+    const t = trainerFor(g), grows = g.learnMax.map((v, k) => (v > 0 && v > g.base[k] ? `${STATS[k]} ${g.base[k]} → ${v}` : '')).filter(Boolean).join(', ');
+    const neg = g.base.map((v, k) => (v < 0 ? `${v} ${STATS[k]}` : '')).filter(Boolean).join(', ');
+    return `<li>${esc(g.name)}: ${grows}, in ${cyclesToGrow([g])} working nights. ${t ? `Train it in <b>${esc(t.name)}</b> (${TRAINERS[gm(t).id]})` : 'No free machine you own takes it'}${t && neg ? `; its ${neg} applies there while it trains` : ''}.</li>`;
+  };
+  return `<p class="warn">Unused Learning Algorithm modules still have growing to do. They grow +1 per stat on each night their machine works, in any machine, so put them where one works every night. The Alarm System is best: it works every night it has power and draws the least (4 per night), so a module's negative Efficiency costs the least there. Use free slots, or swap out a module that does nothing for that machine (the Alarm ignores Quality).</p><ul class="plain">${growing.map(([g]) => line(g)).join('')}</ul>`;
 }
 
 const solveAsync = (grid, types, opts) => new Promise(res => { worker = startSolver({ grid, types, opts }, () => {}, res); });
@@ -433,7 +459,33 @@ async function planAll() {
       spares.set(x.m.key, spares.get(x.m.key).filter(i => !give.includes(i)).map(i => i - give.filter(g => g < i).length));
     }
   }
-  plan = { results, avail, types: typesOf(S.pool), pool: S.pool, at: Date.now() };
+  // Next Module Bay Expansion Kit: re-plan each machine that can still expand with one more bay stage, using its
+  // own modules plus the leftovers. Meeting a target it misses now wins; otherwise the highest-ranked machine that
+  // gains. Compared at fully grown stats, the same way pass 2 values Learning modules.
+  const grownById = Object.fromEntries(typesOf(S.pool.map(g => ({ ...g, base: grownBase(g) }))).map(t => [t.id, t]));
+  let expand = null;
+  for (const [i, x] of results.entries()) {
+    const m = x.m, bays = GAME.bays[gm(m).bay];
+    if (!x.r || m.stage >= bays.length - 1) continue;
+    const mins = effectiveMins(m), weights = priorityWeights(m.priority);
+    if (!x.unreachable && jobPerformance(m) !== null) weights[0] = 0;
+    if (x.unreachable) mins.forEach((v, k) => { if (v !== null) weights[k] += 1e9; });
+    if (weights.every(w => !w)) continue;
+    step('Checking bay expansions', i, m);
+    const grid = gridOf(bays[m.stage + 1].layout);
+    take(x.r.placements, -1);
+    const r = await solveAsync(grid, typesFor(m, 0.001, weights), { ...opts(weights, x.unreachable ? [null, null, null] : mins, m), heuristicMs: Math.min(1000, budget / 2), timeLimitMs: Math.min(2000, budget) });
+    take(x.r.placements, 1);
+    if (stopped) return;
+    if (!r.found) continue;
+    const meets = t => mins.every((v, k) => v === null || t[k] >= v);
+    const score = (g, pl) => evaluate(g, pl, grownById).totals.reduce((s, v, k) => s + weights[k] * v, 0);
+    const before = evaluate(gridOf(layoutOf(m)), x.r.placements, typesById).totals;
+    const fixes = !meets(before) && meets(r.totals);
+    if (!fixes && score(grid, r.placements) <= score(gridOf(layoutOf(m)), x.r.placements) + 1e-9) continue;
+    if (!expand || (fixes && !expand.fixes)) expand = { name: m.name, to: bays[m.stage + 1].name, before, after: r.totals, fixes };
+  }
+  plan = { results, avail, types: typesOf(S.pool), pool: S.pool, at: Date.now(), expand };
   // Keep a compact copy for overlay.html.
   const byId = Object.fromEntries(plan.types.map(t => [t.id, t])), sources = sourcesFor(results.filter(x => x.r), S.pool);
   S.lastPlan = { at: plan.at, pool: S.pool.map(g => ({ name: g.name, node: !!g.node, base: g.base, cells: g.cells, details: moduleDetails(g) })),
