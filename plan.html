@@ -437,7 +437,10 @@ async function planAll() {
       // Not for a stat that only counts in whole steps (Furnace Quality: 162 is no better than 101).
       // shortcut: step stats ignore growth unless prioritised; count it only if it reaches the next step, if wanted.
       const growW = weights.map((w, k) => w || (effectiveMins(m)[k] !== null && !(k === 2 && gm(m).qualityStep) ? Math.max(...weights, 1) : 0));
-      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001, growW), opts(weights, mins, m));
+      // Tie-break: a tiny weight on every stat, so a free placement bonus (Side Mount on the left edge, Top Mount on
+      // the top row) is always taken, even for a stat that stopped counting. Far below a module's cost, so it never adds modules.
+      const tie = weights.map(w => w || 1e-6);
+      const r2 = await solveAsync(gridOf(layoutOf(m)), typesFor(m, 0.001, growW), opts(tie, mins, m));
       if (stopped) return;
       if (r2.found) r = r2;
     }
