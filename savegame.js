@@ -102,6 +102,13 @@ function readSave(text, GAME) {
     });
   }
 
+  // Where a loose module lies: the nearest container that is not the save's hidden bag (a room, a box...).
+  const parentOf = new Map();
+  for (const o of items) (o.childItems || []).forEach(u => parentOf.set(u, o));
+  const looseIn = o => {
+    for (let p = parentOf.get(o.uuid); p; p = parentOf.get(p.uuid)) if (!/hidden save bag/i.test(p.name || '')) return `${p.name || p.identifier} #${p.uniqueId}`;
+    return 'outside any room';
+  };
   const groups = new Map();
   for (const o of items) {
     if (!o._keys.includes('IS_OWNED_TAG') || !isModuleItem(o)) continue;
@@ -110,6 +117,7 @@ function readSave(text, GAME) {
     const g = groups.get(key), at = placeOf.get(o.uniqueId) || 0;
     g.count++;
     g.where[at] = (g.where[at] || 0) + 1;
+    if (!at) (g.looseIn = g.looseIn || []).push(looseIn(o)); // e.g. "Machine Bay (Expanded) #8310"
   }
   const modules = [...groups.values()].sort((a, b) => !!a.node - !!b.node || a.name.localeCompare(b.name));
 

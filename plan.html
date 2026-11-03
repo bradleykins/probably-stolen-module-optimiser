@@ -226,7 +226,8 @@ function sourcesFor(results, pool) {
       for (const where of Object.keys(stock[p.id])) if (need > 0 && where !== '0') need = takeFrom(p.id, need, where, from);
       if (!from.length) return '';
       const [where] = from[0];
-      return String(where) === String(m.uid) ? 'already in this machine' : where == 0 ? 'loose (in storage)' : `take from ${machineName(where)}`;
+      const loose = [...new Set(pool[p.id].looseIn || [])];
+      return String(where) === String(m.uid) ? 'already in this machine' : where == 0 ? (loose.length ? `loose in ${loose.join(' or ')}` : 'loose (in storage)') : `take from ${machineName(where)}`;
     });
     out.set(m.key, items);
   }
