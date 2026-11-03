@@ -40,4 +40,12 @@ assert.strictEqual(G.complexity(dc, { ...dc.innate, weak: 0 }), 2);
 assert.ok(Math.abs(G.mult({ fast_grower: 2 }, 'GROWTH_SPEED') - (1 + 25 * Math.pow(2, 0.75) / 100)) < 1e-9);
 assert.strictEqual(G.success(0, 0), 95);
 assert.strictEqual(G.success(20, 0), 5);
+// Fish and rats (animals.js): game weights and cuts.
+const A = require('./animals.js');
+const tilapia = A.FISH.find(f => f.name === 'Tilapia');
+assert.strictEqual(A.fishWeight(tilapia, 6), 283); // 200 g at day 5 to 450 g at day 8
+assert.strictEqual(A.ratWeight(4), 305); // 5 g + 75 + 75 + 75 + 75
+assert.strictEqual(A.ratWeight(10), 407);
+assert.deepStrictEqual(A.ratCuts(305), { cuts: '1 Small Raw Meat, 1 Morsel, 1 Small Morsel', kcal: 965, value: 110 });
+assert.strictEqual(A.best(A.ratTable(), 'perKFeed').age, 4);
 console.log('tools tests passed');

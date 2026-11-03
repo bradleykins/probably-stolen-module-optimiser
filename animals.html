@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fish and Rat Culling</title>
+<link rel="stylesheet" href="style.css">
+<style>
+nav a { color: var(--accent); }
+.pcard { border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-width: 0; margin-bottom: 10px; }
+.pcard > summary { cursor: pointer; }
+.pcard h4 { display: inline; margin: 0; font-size: 15px; }
+.scroll { overflow-x: auto; }
+table.t td, table.t th { padding: 2px 10px 2px 0; text-align: left; font-size: 13px; white-space: nowrap; }
+table.t th { color: var(--muted); font-weight: 600; }
+tr.best td { color: var(--accent); font-weight: 600; }
+tr.risky td { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fish and Rat Culling</h1>
+  <p>The best age to butcher each fish and rat, worked out from the game's growth code.
+    <nav style="display:inline"><a href="plan.html">All machines planner →</a> · <a href="chem.html">Chemistry recipes →</a> · <a href="plants.html">Plant DNA →</a></nav></p>
+</header>
+<main style="display:block">
+  <section>
+    <h2>Fish (RAS tank)</h2>
+    <div class="row stack">
+      <label>What runs out first<select id="fishGoal">
+        <option value="perKFeed">Feed: most value per 1,000 kcal fed</option>
+        <option value="perLNight">Tank water: most value per litre of tank a night</option>
+      </select></label>
+    </div>
+    <p class="hint">A fish turns a fixed share of every kcal it eats into meat (its conversion), at any age, so age only changes how that meat is cut and how much tank it uses. Bigger fillets are worth more per kcal. Value counts meat, Skin Grafts and Fish Scrap at their sale value, less what the fish cost to buy. Ages are nights in the tank while fed; from its old age (red) each night has a 50% chance it dies.</p>
+    <div id="fishSummary"></div>
+    <div id="fish"></div>
+  </section>
+  <section>
+    <h2>Rats (Animal Cage)</h2>
+    <div class="row stack">
+      <label>Growth Rate gene<input type="number" id="growth" step="0.05" min="0.1" value="1"></label>
+      <label>Hunger Rate gene (kcal a night)<input type="number" id="hunger" min="1" value="65"></label>
+      <label>Feeder "feed up to" %<input type="number" id="target" min="25" max="100" value="85"></label>
+    </div>
+    <p class="hint">A rat eats its Hunger Rate every night whatever its size, and its meat is its weight cut into 400 g Raw Meat, 200 g Small Raw Meat, 100 g Morsels and a Small Morsel for every 50 g started. It grows fast to day 5, slowly to day 10, then loses weight from day 11. From day 14 (× Longevity) each night has a 75% chance it dies. Rats breed from day 3.</p>
+    <div id="rats"></div>
+  </section>
+</main>
+<script src="animals.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const STAGES = ['Roe', 'Fry', 'Juvenile', 'Adolescent', 'Adult', 'Elder'];
+const KEY = 'ps-animals';
+let S = { fishGoal: 'perKFeed', growth: 1, hunger: 65, target: 85 };
+try { S = { ...S, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch {}
+
+const STURGEON = `<p>Sturgeon is for caviar (value 240 a jar; Sturgeon Roe is 120). From Adult (day 18) she grows 40 g of eggs a night while her health is at least 90%, up to 15% of her stage weight: 525 g as an Adult, 750 g as an Elder (day 34), about 13 and 19 nights. Each 100 g is one jar.</p>
+<ul class="plain">
+  <li>Egg surgery: her first 10 jars ever are all caviar, the next 6 alternate caviar and roe, every jar after that is roe. It costs 20% of her health when she is full (up to 50% if you cut early), so strip her only when she is full.</li>
+  <li>Butchering her gives every egg inside as caviar, whatever her surgery count.</li>
+  <li>Best: strip her when full until the next surgery would be mostly roe (after about 12 jars, her second Elder load near day 52). Then let her fill once more and butcher her full, around day 71, before day 80 when she can die of old age.</li>
+</ul>`;
+
+function fishCard(f, goal) {
+  const rows = fishTable(f), pick = best(rows, goal);
+  const head = '<tr><th>Age</th><th>Stage</th><th>Weight</th><th>Water</th><th>Fed</th><th>Meat kcal</th><th>Cuts</th><th>Value</th><th>Per 1,000 kcal fed</th><th>Per L·night</th></tr>';
+  const body = rows.map(r => `<tr class="${r === pick ? 'best' : r.risky ? 'risky' : ''}"><td>${r.age}</td><td>${STAGES[r.stage]}</td><td>${r.weight} g</td><td>${r.water} mL</td><td>${r.fed}</td><td>${r.meat}</td><td>${esc(r.cuts)}</td><td>${r.value}</td><td>${r.perKFeed.toFixed(1)}</td><td>${r.perLNight.toFixed(2)}</td></tr>`).join('');
+  return `<details class="pcard"><summary><h4>${esc(f.name)}</h4> <span class="muted">cull at day ${pick.age} (${pick.weight} g, ${esc(pick.cuts)})</span></summary>
+    <p class="hint">${esc(f.note)} Conversion ${f.conv}: ${Math.round(f.conv * 100)}% of every kcal eaten becomes meat. Upkeep ${f.upkeep} kcal per 100 g a night (half as an Elder).</p>
+    ${f.sturgeon ? STURGEON : ''}<div class="scroll"><table class="t">${head}${body}</table></div></details>`;
+}
+
+function render() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {}
+  $('#fishGoal').value = S.fishGoal; $('#growth').value = S.growth; $('#hunger').value = S.hunger; $('#target').value = S.target;
+  const other = S.fishGoal === 'perKFeed' ? 'perLNight' : 'perKFeed';
+  $('#fishSummary').innerHTML = `<div class="scroll"><table class="t"><tr><th>Fish</th><th>Cull at (your choice)</th><th>${other === 'perLNight' ? 'If tank water runs out first' : 'If feed runs out first'}</th><th>Dies of old age from</th></tr>${FISH.map(f => {
+    const rows = fishTable(f), a = best(rows, S.fishGoal), b = best(rows, other);
+    if (f.sturgeon) return `<tr><td>${esc(f.name)}</td><td class="ok" colspan="2">for caviar: strip her eggs, then butcher her full near day 71 (open Sturgeon below)</td><td>day ${f.oldAge}</td></tr>`;
+    return `<tr><td>${esc(f.name)}</td><td class="ok">day ${a.age} · ${a.weight} g · value ${a.value}</td><td>day ${b.age} · ${b.weight} g · value ${b.value}</td><td>day ${f.oldAge}</td></tr>`;
+  }).join('')}</table></div>`;
+  $('#fish').innerHTML = FISH.map(f => fishCard(f, S.fishGoal)).join('');
+
+  const rows = ratTable({ growth: +S.growth || 1, hunger: +S.hunger || 65, target: +S.target || 85 });
+  const feed = best(rows, 'perKFeed'), slot = best(rows, 'valuePerNight'), most = best(rows, 'value');
+  $('#rats').innerHTML = `<ul class="plain">
+      <li class="ok"><b>Cull at day ${feed.age}</b> (${feed.weight} g): the most meat per kcal fed, ${feed.perKFeed.toFixed(2)} kcal of meat per kcal of feed (${esc(feed.cuts)}).</li>
+      <li>Most value per cage space a night: day ${slot.age} (${slot.valuePerNight.toFixed(1)} a night).</li>
+      <li>Most from one rat: day ${most.age} (${most.weight} g, value ${most.value}). Keep breeders, cull the rest.</li>
+    </ul>
+    <div class="scroll"><table class="t"><tr><th>Age</th><th>Weight</th><th>Cuts</th><th>Meat kcal</th><th>Value</th><th>Fed kcal</th><th>Meat per kcal fed</th><th>Value a night</th></tr>${rows.map(r => `<tr class="${r === feed ? 'best' : r.risky ? 'risky' : ''}"><td>${r.age}</td><td>${r.weight} g</td><td>${esc(r.cuts)}</td><td>${r.kcal}</td><td>${r.value}</td><td>${r.fed}</td><td>${r.perKFeed.toFixed(2)}</td><td>${r.valuePerNight.toFixed(1)}</td></tr>`).join('')}</table></div>`;
+}
+
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'fishGoal') S.fishGoal = t.value;
+  else if (['growth', 'hunger', 'target'].includes(t.id)) S[t.id] = +t.value;
+  else return;
+  render();
+});
+render();
+</script>
+</body>
+</html>
