@@ -19,6 +19,8 @@ const CHEM = (() => {
     base: { particle: 5 }, stabilizing_agent: { particle: 5 }, debris: { particle: 200 }, nomore: { particle: 5 },
     contraceptive: { particle: 5 }, zyanide: { particle: 5 },
   };
+  // Filter wear per liquid: [µL held back per step, durability per step]; others [1000, 2] (Liquid.cs).
+  const FILTER_WEAR = { mineral: [2000, 1], physical_contaminant: [1500, 2] };
   const EVAPORATIVE = Object.keys(LIQUIDS).filter(k => LIQUIDS[k].boil);
 
   // What you put in. Plants per item; bottles are what the shop sells (bottles carry 2-8% random impurity: 5% average).
@@ -197,11 +199,19 @@ const CHEM = (() => {
     },
     heat(s, { target, seconds, high, modules }) { const plate = { target, factor: plateFactor(high, modules) }; for (let i = 0; i < seconds; i++) tick(s, plate); },
     wait(s, { seconds }) { for (let i = 0; i < seconds; i++) tick(s, null); },
-    filter(s, { size }) { // pour through a filter into a clean container
+    // Pour through a filter into a clean container. It holds back every liquid whose particle size is at least
+    // the filter's size, and wears by durabilityUsage per filterVolumeRemoved µL held back (WaterHelper, Liquid).
+    // Records st.wear: the durability used, spread over as many filters as that takes (swap one when it wears out).
+    filter(s, st) {
+      const { size } = st;
+      st.wear = 0;
       for (const id of Object.keys(s.l)) {
         const L = LIQUIDS[id];
         if (!L || L.unfilterable || size > L.particle) continue;
-        s.l[id] = Math.round(s.l[id] * (L.filterKeep || 0));
+        const [per, use] = FILTER_WEAR[id] || [1000, 2], floor = Math.round(s.l[id] * (L.filterKeep || 0));
+        const steps = Math.max(0, Math.ceil((s.l[id] - floor) / per));
+        st.wear += steps * use;
+        s.l[id] = Math.max(floor, s.l[id] - steps * per);
       }
     },
     evaporate(s, { nights, performance }) { // Evaporator: up to 300 mL x (1 + P/100) per night, split by share

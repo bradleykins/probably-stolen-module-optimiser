@@ -68,6 +68,10 @@ const protein = ratio => [
   ...(ratio > 0 ? [{ op: 'pour', item: 'acid', ratioOf: 'protein', ratio }, { op: 'wait', seconds: 60 }] : []),
   { op: 'pour', item: 'base', ratioOf: 'acid', ratio: 1 }, { op: 'wait', seconds: 60 },
 ];
+// Filtering: Kotton Fabric (size 150, 1000 durability) first holds back the bulky solids (plant matter, mush,
+// debris: size 200); then a Water Filter (size 22, 400 durability, bought) only has the fine ones left
+// (minerals, contaminants). Same result as the Water Filter alone, with far less wear on it.
+const filters = () => [{ op: 'filter', size: 150, name: 'Kotton Fabric', durability: 1000 }, { op: 'filter', size: 22, name: 'Water Filter', durability: 400 }];
 // Alcohol as a multiple of the mush in the container (the game's extraction checks alcohol vs mush).
 const alcohol = (mush, ratio) => ({ op: 'pour', item: 'alcohol', ratioOf: mush, ratio });
 
@@ -81,9 +85,8 @@ const TEMPLATES = {
       { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
       alcohol('dream_cap_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
-      { op: 'filter', size: 22 },
       ...protein(p.pa),
-      { op: 'filter', size: 22 },
+      ...filters(),
     ]),
   },
   nightmare_dust: {
@@ -93,9 +96,8 @@ const TEMPLATES = {
       { op: 'blend', item: 'nightmare_cap', count: n(), modules: S.blender },
       alcohol('nightmare_cap_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
-      { op: 'filter', size: 22 },
       ...protein(p.pa),
-      { op: 'filter', size: 22 },
+      ...filters(),
     ]),
   },
   caffeine_pill: {
@@ -106,9 +108,8 @@ const TEMPLATES = {
       ...(p.lip > 0 ? [{ op: 'pour', item: 'lipobond_agent', amount: p.lip * n() }, { op: 'wait', seconds: 60 }] : []),
       alcohol('coffee_mush', p.alc),
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate, boilOff: 'lipobond_agent' },
-      { op: 'filter', size: 22 },
       ...protein(p.pa),
-      { op: 'filter', size: 22 },
+      ...filters(),
     ]),
   },
   fanta_pill: {
@@ -117,11 +118,11 @@ const TEMPLATES = {
     steps: p => dry([
       { op: 'pour', item: 'fanta_precursor', amount: 250000 * n() },
       { op: 'pour', item: 'acid', amount: p.acid * n() }, { op: 'wait', seconds: p.t1 },
-      { op: 'filter', size: 22 },
+      ...filters(),
       { op: 'pour', item: 'reducing_agent', amount: p.red * n() },
       { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
       ...acidBase({ acid: 0, base: p.base * n() }),
-      { op: 'filter', size: 22 },
+      ...filters(),
     ]),
   },
   pink_alt_injector: {
@@ -132,16 +133,15 @@ const TEMPLATES = {
         { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
         alcohol('dream_cap_mush', p.alc),
         { op: 'heat', target: 45, seconds: p.t0, high: true, modules: S.plate },
-        { op: 'filter', size: 22 },
+        ...filters(),
       ]);
       return dry([...extract,
         { op: 'pour', item: 'reducing_agent', amount: p.red * n() },
         { op: 'pour', item: 'lipobond_agent', amount: p.lip * n() },
         { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
         ...(p.t3 > 0 ? [{ op: 'heat', target: 58, seconds: p.t3, high: true, modules: S.plate, boilOff: 'lipobond_agent' }] : []), // boil off leftover lipobond (extract is safe below 60)
-        { op: 'filter', size: 22 },
         ...protein(p.pa),
-        { op: 'filter', size: 22 },
+        ...filters(),
       ]);
     },
   },
@@ -246,7 +246,8 @@ function stepHtml(st) {
     }
     case 'filter': {
       const gone = Object.keys(b).filter(id => b[id] > 0 && (a[id] || 0) < b[id] / 2);
-      return `Pour through a Water Filter (size 22) into a clean container${gone.length ? `. It holds back the ${gone.map(liq).join(', ')}` : ''}.`;
+      const count = Math.ceil(st.wear / st.durability); // swap in a fresh one when it wears out
+      return `Pour through <b>${esc(st.name)}</b> (catches size ${st.size}+) into a clean container${gone.length ? `. It holds back the ${gone.map(liq).join(', ')}` : ''}. Uses about ${st.wear} durability: ${count > 1 ? `<b>${count} ${esc(st.name)}s</b> (${st.durability} each; swap in a fresh one when it wears out)` : `${Math.round(st.wear / st.durability * 100)}% of one`}.`;
     }
     case 'dry': return `Evaporator until dry: ${st.nights} night${st.nights === 1 ? '' : 's'}.`;
   }
@@ -263,7 +264,8 @@ function limitHtml(st) {
 // Leave out pours that come to nothing (no protein or acid left) and the wait after them.
 const shownSteps = steps => steps.filter((st, i) => {
   const empty = x => x?.op === 'pour' && x.ratioOf && x.amount < 100;
-  return !empty(st) && !(st.op === 'wait' && empty(steps[i - 1])) && !(st.op === 'dry' && !st.nights);
+  // a filter that holds nothing back is left out too
+  return !empty(st) && !(st.op === 'wait' && empty(steps[i - 1])) && !(st.op === 'dry' && !st.nights) && !(st.op === 'filter' && !st.wear);
 });
 
 // Recipe settings in words, to say how a goal's recipe differs from the purest one.
