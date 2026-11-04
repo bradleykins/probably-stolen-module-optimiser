@@ -152,13 +152,13 @@ function boardHtml(layout, placements, modules, cellSize = 30, done = []) {
 // The overlay window. Chrome/Edge: a Document Picture-in-Picture window, which the browser keeps on top
 // of every other window (the game too, in windowed or borderless mode). It closes with this tab.
 // Elsewhere: a plain popup, which only stays on top with overlay.ahk.
-async function showOverlay() {
-  const url = new URL('overlay.html', location.href).href;
-  // As wide as the widest plan (a 7-column bay at 36 px: 264 px, plus padding and the scrollbar), half the screen tall.
-  const width = 300, height = Math.round(screen.availHeight / 2);
-  if (!window.documentPictureInPicture) { window.open(url, 'LayoutOverlay', `popup,width=${width},height=${height}`); return; }
+// Default width: the widest plan (a 7-column bay at 36 px: 264 px, plus padding and the scrollbar); half the screen tall.
+async function showOverlay(page = 'overlay.html', title = 'Layout Overlay', width = 300) {
+  const url = new URL(page, location.href).href;
+  const height = Math.round(screen.availHeight / 2);
+  if (!window.documentPictureInPicture) { window.open(url, title.replace(/ /g, ''), `popup,width=${width},height=${height}`); return; }
   const pip = await documentPictureInPicture.requestWindow({ width, height });
-  pip.document.title = 'Layout Overlay';
+  pip.document.title = title;
   pip.document.body.style.margin = '0';
   pip.document.body.innerHTML = `<iframe src="${url}" style="border:0;width:100vw;height:100vh;display:block"></iframe>`;
 }

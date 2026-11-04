@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recipe Overlay</title>
+<link rel="stylesheet" href="style.css">
+<style>
+body { font-size: 13px; }
+.pinned { position: sticky; top: 0; background: var(--bg); padding: 8px; border-bottom: 1px solid var(--line); }
+.pinned .row { margin-bottom: 4px; }
+.pinned select { flex: 1; min-width: 0; }
+.wrap { padding: 0 8px 8px; }
+.steps { margin: 6px 0; padding-left: 20px; }
+.steps li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="pinned">
+  <div class="row"><button id="prev" aria-label="Previous">◀</button><select id="pick" aria-label="Recipe"></select><button id="next" aria-label="Next">▶</button></div>
+  <div id="line" class="muted"></div>
+</div>
+<div class="wrap">
+  <div id="view"></div>
+  <p class="hint">Shows the recipes from the Chemistry page, with its amounts. Updates when you change them there. ◀ ▶ or the arrow keys move between recipes.</p>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let pick = 0;
+try { pick = +localStorage.getItem('ps-chem-overlay-pick') || 0; } catch {}
+
+function render() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem('ps-chem-overlay')) || []; } catch {}
+  if (!list.length) { $('#view').innerHTML = '<p class="hint">Open the Chemistry page on this site first.</p>'; return; }
+  pick = (pick + list.length) % list.length; // wraps round at either end
+  try { localStorage.setItem('ps-chem-overlay-pick', pick); } catch {}
+  $('#pick').innerHTML = list.map((r, i) => `<option value="${i}" ${i === pick ? 'selected' : ''}>${r.title}</option>`).join('');
+  $('#line').innerHTML = list[pick].line;
+  $('#view').innerHTML = list[pick].steps; // HTML built by chem.html from its own data
+}
+
+$('#pick').addEventListener('change', e => { pick = +e.target.value; render(); });
+$('#prev').addEventListener('click', () => { pick--; render(); });
+$('#next').addEventListener('click', () => { pick++; render(); });
+document.addEventListener('keydown', e => { if (e.key === 'ArrowLeft') { pick--; render(); } if (e.key === 'ArrowRight') { pick++; render(); } });
+window.addEventListener('storage', render); // chem.html changed an amount or worked out new recipes
+render();
+</script>
+</body>
+</html>

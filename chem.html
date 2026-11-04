@@ -41,7 +41,7 @@ table.t th { color: var(--muted); font-weight: 600; }
       The Finisher swaps its loss for contaminant, so Lab Pure (99%) needs 3+ Finisher modules. Shop bottles carry 2-8% random impurity; recipes use the 5% average.</p>
     <div class="row"><button id="importSave">Import from save</button><input type="file" id="saveFile" accept=".es3" hidden><span id="importStatus" class="muted"></span></div>
     <div id="evapNote"></div>
-    <div class="row"><button class="primary" id="solve">Work out recipes</button><span id="status" class="muted"></span></div>
+    <div class="row"><button class="primary" id="solve">Work out recipes</button><button id="openOverlay" title="Small always-on-top window with the recipe steps, to keep over the game (Chrome or Edge; game windowed or borderless). Keep this tab open: the overlay closes with it.">Open overlay</button><span id="status" class="muted"></span></div>
     <p class="hint">Not here: Zyanide and Birth Control Pills (no recipe in the game; their purity comes from the bought item).</p>
   </section>
   <section>
@@ -82,6 +82,18 @@ const protein = ratio => [
 const filters = () => [{ op: 'filter', size: 150, name: 'Kotton Fabric', durability: 1000 }, { op: 'filter', size: 22, name: 'Water Filter', durability: 400 }];
 // Alcohol as a multiple of the mush in the container (the game's extraction checks alcohol vs mush).
 const alcohol = (mush, ratio) => ({ op: 'pour', item: 'alcohol', ratioOf: mush, ratio });
+// Extraction in portions: the alcohol only has to be 5× the mush *in the canister now* and is not used up,
+// so blending a few caps at a time into the same alcohol needs far less of it, and less to dry.
+// Later portions are marked so the recipe shows them as one "repeat" line.
+function extractSteps(item, mush, p, target, seconds) {
+  const per = Math.min(p.per, n()), out = [];
+  for (let done = 0; done < n(); done += per) {
+    out.push({ op: 'blend', item, count: Math.min(per, n() - done), modules: S.blender, portion: done > 0 });
+    if (!done) out.push(alcohol(mush, p.alc));
+    out.push({ op: 'heat', target, seconds, high: true, modules: S.plate, portion: done > 0 });
+  }
+  return out;
+}
 
 // Recipe templates: parameters -> steps. Ranges are what the optimiser searches.
 let N = null; // items in the batch being simulated; null = the setup's batch size
@@ -89,22 +101,18 @@ const n = () => N ?? S.batch;
 const TEMPLATES = {
   dream_dust: {
     input: 'dream_cap',
-    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] }, // alc = × the mush; T stays under the 50 °C mush limit
+    params: { per: [1, 50], alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] }, // per = caps per portion; alc = × the mush; T stays under the 50 °C mush limit
     steps: p => dry([
-      { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
-      alcohol('dream_cap_mush', p.alc),
-      { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
+      ...extractSteps('dream_cap', 'dream_cap_mush', p, p.T, p.t),
       ...protein(p.pa),
       ...filters(),
     ]),
   },
   nightmare_dust: {
     input: 'nightmare_cap',
-    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] },
+    params: { per: [1, 50], alc: [1, 12, 0.5], pa: [0, 1, 0.25], T: [40, 49], t: [20, 400] },
     steps: p => dry([
-      { op: 'blend', item: 'nightmare_cap', count: n(), modules: S.blender },
-      alcohol('nightmare_cap_mush', p.alc),
-      { op: 'heat', target: p.T, seconds: p.t, high: true, modules: S.plate },
+      ...extractSteps('nightmare_cap', 'nightmare_cap_mush', p, p.T, p.t),
       ...protein(p.pa),
       ...filters(),
     ]),
@@ -136,12 +144,10 @@ const TEMPLATES = {
   },
   pink_alt_injector: {
     input: 'dream_cap',
-    params: { alc: [1, 12, 0.5], pa: [0, 1, 0.25], t0: [20, 300], red: [0, 20000], lip: [0, 10000], T: [45, 55], t: [20, 600], t3: [0, 600] },
+    params: { per: [1, 50], alc: [1, 12, 0.5], pa: [0, 1, 0.25], t0: [20, 300], red: [0, 20000], lip: [0, 10000], T: [45, 55], t: [20, 600], t3: [0, 600] },
     steps: p => {
       const extract = dry([
-        { op: 'blend', item: 'dream_cap', count: n(), modules: S.blender },
-        alcohol('dream_cap_mush', p.alc),
-        { op: 'heat', target: 45, seconds: p.t0, high: true, modules: S.plate },
+        ...extractSteps('dream_cap', 'dream_cap_mush', p, 45, p.t0),
         ...filters(),
       ]);
       return dry([...extract,
@@ -238,7 +244,9 @@ function groupSteps(steps) {
   const out = [];
   for (const st of shownSteps(steps)) {
     const last = out.at(-1);
-    if (st.op === 'wait' && last) last.wait = st;
+    if (st.portion && last?.st.op === 'repeat') { if (st.op === 'blend') last.portions++; else last.heats.push(st); }
+    else if (st.portion) out.push({ st: { op: 'repeat', item: st.item, count: st.count }, portions: 1, heats: [] });
+    else if (st.op === 'wait' && last) last.wait = st;
     else if (st.op === 'filter' && last?.st.op === 'filter') last.filters.push(st);
     else out.push({ st, filters: [st] });
   }
@@ -246,11 +254,18 @@ function groupSteps(steps) {
 }
 
 // [same-for-any-amount text, exact figures for this batch]
-function stepParts({ st, wait, filters }, product, count) {
+function stepParts({ st, wait, filters, portions, heats }, product, count) {
   const b = st.before || {}, a = st.after || {}, unit = inputName(product);
   const w = wait ? `, wait about ${wait.seconds} s` : '';
   switch (st.op) {
-    case 'blend': { const m = MUSH.find(id => has(a, id)); return [`Blend the ${unit}s.`, m ? `${count} make ${mL(a[m])} of ${liq(m)}` : '']; }
+    case 'blend': {
+      const m = MUSH.find(id => has(a, id)), first = st.count < count;
+      return [first ? `Blend <b>${plural(st.count, unit)}</b> into the canister (one portion).` : `Blend the ${unit}s.`, m ? `${plural(st.count, unit)} make ${mL(a[m])} of ${liq(m)}` : ''];
+    }
+    case 'repeat': {
+      const done = heats.every(h => !MUSH.some(id => has(h.after, id)));
+      return [`Blend the next <b>${plural(st.count, unit)}</b> into the same canister and heat ${done ? 'until the mush reads 0' : `for ${heats[0]?.seconds} s`} again. Repeat until all are in. No more alcohol.`, `${plural(portions, 'more portion')}`];
+    }
     case 'pour': {
       const got = (a[st.item] || 0) - (b[st.item] || 0);
       if (st.item === 'alcohol' && st.ratioOf) return [`Add alcohol to the canister: <b>${st.ratio}× the ${liq(st.ratioOf)}</b>${w}.`, `${mL(got)} alcohol for ${mL(b[st.ratioOf])} of mush; ${bottlesOf('alcohol', st.amount)}`];
@@ -275,7 +290,7 @@ function stepParts({ st, wait, filters }, product, count) {
 // Recipe settings in words, to say how a goal's recipe differs from the purest one.
 const PARAM_WORDS = {
   alc: v => `alcohol ${v}× the mush`, pa: v => (v ? `acid ${v}× the protein` : 'no acid'), T: v => `heat to ${v} °C`, t: v => `heat ${v} s`,
-  t0: v => `first heat ${v} s`, t1: v => `wait ${v} s after the acid`, t3: v => `boil-off ${v} s`,
+  per: v => `${v} per portion`, t0: v => `first heat ${v} s`, t1: v => `wait ${v} s after the acid`, t3: v => `boil-off ${v} s`,
   lip: v => `${mL(v)} lipobond per item`, red: v => `${mL(v)} reducing agent per item`, acid: v => `${mL(v)} acid per bottle`, base: v => `${mL(v)} base per bottle`,
 };
 const sameRecipe = (a, b) => JSON.stringify(a.p) === JSON.stringify(b.p);
@@ -304,15 +319,18 @@ const stepsHtml = (product, e, count) => `<ol class="steps">${groupSteps(e.steps
 const resultLine = (r, product, count) => `<span class="${r.purity >= S.minGrade ? 'ok' : 'bad'}">${r.grade} ${r.purity.toFixed(1)}%</span> · ${r.units} from ${plural(count, inputName(product))} ${r.nights ? ` · ${plural(r.nights, 'night')} drying` : ''}${r.wet ? ' <span class="bad">(still wet)</span>' : ''}`;
 
 // One card per product: the main recipe, then any alternative worth it, each opens and closes (remembered).
+// Card order: Dream Dust and Caffeine first, the rest after.
+const ORDER = ['dream_dust', 'caffeine_pill', 'nightmare_dust', 'fanta_pill', 'pink_alt_injector'];
+const OVERLAY = {}; // each main recipe as shown, saved for chem-overlay.html
 function productCard(id, res) {
-  const P = CHEM.PRODUCTS[id], open = k => (S.open[k] ?? k === id) ? ' open' : '';
-  if (!res) return `<details class="ccard" data-open="${id}"${open(id)}><summary><b>${P.name}</b></summary><p class="hint">Press "Work out recipes".</p></details>`;
+  const P = CHEM.PRODUCTS[id], open = k => (S.open[k] ?? k === id) ? ' open' : '', title = `${ORDER.indexOf(id) + 1}. ${P.name}`;
   const count = S.amount[id] || S.batch, main = evaluate(id, res.best.p, count);
-  const alts = Object.keys(GOALS).filter(g => g !== 'best' && worthIt(g, res[g], res.best)).map(g => {
+  const alts = Object.keys(GOALS).filter(g => g !== 'best' && res[g] && worthIt(g, res[g], res.best)).map(g => {
     const e = evaluate(id, res[g].p, count);
     return `<details class="alt" data-open="${id}-${g}"${open(`${id}-${g}`)}><summary>${GOALS[g].name}: ${resultLine(e.r, id, count)}</summary>${diffHtml(e, main)}${stepsHtml(id, e, count)}</details>`;
   }).join('');
-  return `<details class="ccard" data-open="${id}"${open(id)}><summary><b>${P.name}</b> <span class="muted">${resultLine(main.r, id, count)}</span></summary>
+  OVERLAY[id] = { title, line: resultLine(main.r, id, count), steps: stepsHtml(id, main, count) };
+  return `<details class="ccard" data-open="${id}"${open(id)}><summary><b>${title}</b> <span class="muted">${OVERLAY[id].line}</span></summary>
     <label class="muted">Amount <input type="number" min="1" max="200" data-amount="${id}" value="${count}"> ${inputName(id)}s</label>
     ${stepsHtml(id, main, count)}${alts}</details>`;
 }
@@ -329,19 +347,28 @@ function focusHtml(results) {
     return { id, r, each, batch: each * r.units, perInput: (each * r.units) / S.batch - cost, cost, input };
   }).sort((a, b) => b.perInput - a.perInput);
   const top = rows[0], name = id => CHEM.PRODUCTS[id].name;
-  return `<div class="ccard" style="grid-column:1/-1"><h4>What to focus on</h4>
-    <p class="ok"><b>Make ${esc(name(top.id))}</b>: ${Math.round(top.perInput)} profit per ${esc(top.input)} (${top.r.units} × ${Math.round(top.each)} from ${S.batch}, ${top.r.grade}).</p>
+  return `<details class="ccard" style="grid-column:1/-1" data-open="focus"${S.open.focus ? ' open' : ''}><summary><b>What to focus on:</b> <span class="ok">make ${esc(name(top.id))}</span> <span class="muted">${Math.round(top.perInput)} profit per ${esc(top.input)} (${top.r.units} × ${Math.round(top.each)} from ${S.batch}, ${top.r.grade})</span></summary>
     <div class="scroll"><table class="t"><tr><th>Product</th><th>Grade</th><th>Each</th><th>From ${S.batch} inputs</th><th>Input cost</th><th>Profit per input</th><th>Input</th></tr>${rows.map(x => `<tr><td>${esc(name(x.id))}</td><td>${x.r.grade}</td><td>${Math.round(x.each)}</td><td>${Math.round(x.batch)}</td><td>${x.cost || 'grown'}</td><td>${Math.round(x.perInput)}</td><td>${esc(x.input)}</td></tr>`).join('')}</table></div>
-    <p class="hint">Sale value = base value (Dream Dust 18, Nightmare Dust 36, Caffeine Pill 10, Fanta Pill 12, Pink Alt Injector 50) plus the grade bonus (Lab Pure +135%, Pharma +85%, Near Pharma +40%, Street Standard 0, Cut −45%, Junk −75%, Starch −95%). Uses each product's purest recipe. Precursor bottles cost about 50 each (Restricted Chemical Supplies, value 100, give 2 plus a reducing agent); plants are grown, so they count as free. Does not count alcohol, acid, base, filters, or buyer demand.</p></div>`;
+    <p class="hint">Sale value = base value (Dream Dust 18, Nightmare Dust 36, Caffeine Pill 10, Fanta Pill 12, Pink Alt Injector 50) plus the grade bonus (Lab Pure +135%, Pharma +85%, Near Pharma +40%, Street Standard 0, Cut −45%, Junk −75%, Starch −95%). Uses each product's purest recipe. Precursor bottles cost about 50 each (Restricted Chemical Supplies, value 100, give 2 plus a reducing agent); plants are grown, so they count as free. Does not count alcohol, acid, base, filters, or buyer demand.</p></details>`;
 }
 
-let RESULTS; // recipes from the last "Work out recipes"; cleared when the setup changes
+// Starting recipes (what "Work out recipes" finds at the default setup), shown until you work out your own.
+const STARTER = {
+  dream_dust: { per: 1, alc: 5, pa: 0.75, T: 49, t: 90 },
+  nightmare_dust: { per: 1, alc: 5, pa: 1, T: 43, t: 141 },
+  caffeine_pill: { lip: 620, alc: 0.75, pa: 1, T: 62, t: 47 },
+  fanta_pill: { acid: 37548, t1: 72, red: 93937, T: 119, t: 240, base: 0 },
+  pink_alt_injector: { per: 1, alc: 9.5, pa: 0.75, t0: 112, red: 9373, lip: 2810, T: 50, t: 429, t3: 197 },
+};
+const starter = () => ({ ...Object.fromEntries(Object.keys(STARTER).map(id => [id, { best: evaluate(id, STARTER[id]) }])), starter: true });
+let RESULTS; // recipes from the last "Work out recipes"; back to the starters when the setup changes
 function render(results) {
   save();
   for (const id of ['blender', 'plate', 'finisher', 'evapP', 'batch']) $('#' + id).value = S[id];
   $('#minGrade').innerHTML = CHEM.GRADES.filter(([p]) => p > 0).map(([p, name]) => `<option value="${p}" ${S.minGrade === p ? 'selected' : ''}>${name} (${p}%+)</option>`).join('');
-  RESULTS = results;
-  $('#products').innerHTML = focusHtml(results) + Object.keys(CHEM.PRODUCTS).map(id => productCard(id, results?.[id])).join('');
+  RESULTS = results || starter();
+  $('#products').innerHTML = (results ? '' : '<p class="hint" style="grid-column:1/-1">Starting recipes, simulated on your setup. Press "Work out recipes" to tune them to it.</p>') + focusHtml(RESULTS) + ORDER.map(id => productCard(id, RESULTS[id])).join('');
+  try { localStorage.setItem('ps-chem-overlay', JSON.stringify(ORDER.map(id => OVERLAY[id]))); } catch {}
 }
 
 async function solveAll() {
@@ -361,12 +388,13 @@ document.addEventListener('change', e => {
   else if (t.id === 'evapP') S.evapP = +t.value || 0;
   else if (t.id === 'batch') S.batch = Math.min(50, Math.max(1, +t.value || 1));
   else if (t.id === 'minGrade') S.minGrade = +t.value;
-  else if (t.dataset.amount) { S.amount[t.dataset.amount] = Math.min(200, Math.max(1, +t.value || 1)); return render(RESULTS); }
+  else if (t.dataset.amount) { S.amount[t.dataset.amount] = Math.min(200, Math.max(1, +t.value || 1)); return render(RESULTS.starter ? undefined : RESULTS); }
   else return;
   render();
 });
 document.addEventListener('toggle', e => { const k = e.target.dataset?.open; if (k) { S.open[k] = e.target.open; save(); } }, true);
 $('#solve').addEventListener('click', solveAll);
+$('#openOverlay').addEventListener('click', () => showOverlay('chem-overlay.html', 'Recipe Overlay', 360));
 $('#importSave').addEventListener('click', () => $('#saveFile').click());
 $('#saveFile').addEventListener('change', e => { importSave(e.target.files[0]); e.target.value = ''; });
 
